@@ -125,6 +125,19 @@ export default function ItemDetails() {
       minute: '2-digit',
     });
 
+  function confidenceBadgeClass(confidence: string): string {
+    switch (confidence) {
+      case 'Extremely Strong Match':
+        return 'bg-emerald-50 text-emerald-800 border border-emerald-200';
+      case 'Very Strong Match':
+        return 'bg-blue-50 text-blue-800 border border-blue-200';
+      case 'Strong Match':
+        return 'bg-amber-50 text-amber-900 border border-amber-200';
+      default:
+        return 'bg-gray-100 text-gray-700 border border-gray-200';
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -326,9 +339,8 @@ export default function ItemDetails() {
               >
                 {isLost ? 'Similar FOUND items' : 'Similar LOST items'}
               </p>
-              <p className="text-xs text-gray-500 mt-2 max-w-xl">
-                Suggestions use category, title, description, and location keywords compared to opposite-type listings
-                that are still pending.
+              <p className="text-sm text-gray-600 mt-2 max-w-xl leading-relaxed">
+                Possible related lost/found items based on similar details.
               </p>
             </div>
           </div>
@@ -352,55 +364,50 @@ export default function ItemDetails() {
           )}
 
           {!similarLoading && similarMatches.length > 0 && (
-            <ul className="space-y-4 mt-2">
-              {similarMatches.map(({ item: m, score, reasons }) => {
+            <ul className="space-y-3 mt-4">
+              {similarMatches.map(({ item: m, confidence }) => {
                 const mLost = m.type === 'lost';
                 return (
                   <li
                     key={m._id}
-                    className="border border-gray-100 rounded-xl p-4 sm:p-5 bg-gray-50/80 hover:bg-white hover:border-blue-200 transition-colors"
+                    className="border border-gray-100 rounded-xl p-4 sm:p-5 bg-gray-50/60 hover:bg-white hover:border-gray-200 hover:shadow-sm transition-all"
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                      <div>
-                        <h3 className="font-semibold text-gray-900 text-base">{m.title}</h3>
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold text-gray-900 text-base leading-snug">{m.title}</h3>
+                        <div className="flex flex-wrap items-center gap-2 mt-2.5">
                           <span
-                            className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase ${
+                            className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide ${
                               mLost ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
                             }`}
                           >
                             {mLost ? 'Lost' : 'Found'}
                           </span>
-                          <span className="text-xs text-gray-600 bg-white border border-gray-200 rounded-full px-2.5 py-0.5">
+                          <span className="text-xs text-gray-600 bg-white border border-gray-200 rounded-full px-2.5 py-0.5 font-medium">
                             {m.category}
                           </span>
-                          <span className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2.5 py-0.5">
-                            Score: {score}
+                          <span
+                            className={`text-xs font-semibold rounded-full px-2.5 py-0.5 ${confidenceBadgeClass(confidence)}`}
+                          >
+                            {confidence}
                           </span>
                         </div>
+                        <div className="flex items-start gap-2 mt-3 text-sm text-gray-600">
+                          <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                          <span className="leading-snug">{m.location}</span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-2.5 leading-relaxed">
+                          Similar keywords and item details detected.
+                        </p>
                       </div>
                       <Link
                         to={`/item/${m._id}`}
-                        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap"
+                        className="inline-flex items-center justify-center gap-1.5 self-start sm:self-center shrink-0 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-colors"
                       >
                         View item
                         <ArrowRight className="w-4 h-4" />
                       </Link>
                     </div>
-                    <div className="flex items-start gap-2 text-sm text-gray-600 mb-3">
-                      <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
-                      <span>{m.location}</span>
-                    </div>
-                    {reasons.length > 0 && (
-                      <div className="border-t border-gray-100 pt-3">
-                        <p className="text-xs font-medium text-gray-500 mb-1.5">Why it matched</p>
-                        <ul className="list-disc list-inside text-xs text-gray-600 space-y-0.5">
-                          {reasons.map((r, i) => (
-                            <li key={i}>{r}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
                   </li>
                 );
               })}

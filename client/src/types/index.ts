@@ -20,8 +20,9 @@ export interface Item {
 
 export interface SimilarItemMatch {
   item: Item;
-  score: number;
-  reasons: string[];
+  confidence: string;
+  /** Present from API but not shown in UI */
+  reasons?: string[];
 }
 
 export interface SimilarItemsResponse {
