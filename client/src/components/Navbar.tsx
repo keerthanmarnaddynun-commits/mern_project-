@@ -55,13 +55,18 @@ export default function Navbar() {
 
           {user ? (
             <div className="hidden md:flex items-center gap-3">
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg">
-                <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg min-w-0 max-w-[220px]">
+                <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                   <User className="w-3.5 h-3.5 text-blue-600" />
                 </div>
-                <span className="text-sm text-gray-700 font-medium max-w-[140px] truncate">
-                  {user.user_metadata?.full_name ?? user.email}
-                </span>
+                <div className="min-w-0 flex flex-col leading-tight">
+                  <span className="text-sm text-gray-900 font-medium truncate" title={user.name}>
+                    {user.name}
+                  </span>
+                  <span className="text-xs text-gray-500 truncate" title={user.email}>
+                    {user.email}
+                  </span>
+                </div>
               </div>
               <button
                 onClick={handleSignOut}
@@ -110,13 +115,19 @@ export default function Navbar() {
             Report Item
           </Link>
           {user ? (
-            <button
-              onClick={() => { setMenuOpen(false); handleSignOut(); }}
-              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50"
-            >
-              <LogOut className="w-4 h-4" />
-              Sign out
-            </button>
+            <>
+              <div className="px-3 py-2 text-xs text-gray-500 border-b border-gray-100 mb-1">
+                <p className="font-medium text-gray-800 truncate">{user.name}</p>
+                <p className="truncate">{user.email}</p>
+              </div>
+              <button
+                onClick={() => { setMenuOpen(false); handleSignOut(); }}
+                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </button>
+            </>
           ) : (
             <>
               <Link to="/login" onClick={() => setMenuOpen(false)} className="flex items-center px-3 py-2.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Sign in</Link>

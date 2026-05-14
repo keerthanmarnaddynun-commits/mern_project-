@@ -2,6 +2,14 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+if (!process.env.JWT_SECRET || String(process.env.JWT_SECRET).trim() === '') {
+  console.error(
+    '\n[FATAL] JWT_SECRET is missing or empty.\n' +
+      'Add JWT_SECRET to your server .env file (use a long random string, e.g. openssl rand -hex 32).\n'
+  );
+  process.exit(1);
+}
+
 const connectDB = require('./config/db');
 
 // Route imports

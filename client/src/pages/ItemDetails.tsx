@@ -12,10 +12,12 @@ import {
   Trash2,
   User,
   Clock,
+  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
-import { fetchItemById, markResolved, deleteItem } from '../services/api';
-import type { Item } from '../types';
+import { fetchItemById, markResolved, deleteItem, getSimilarItems } from '../services/api';
+import type { Item, SimilarItemMatch } from '../types';
 import { useAuth } from '../context/AuthContext';
 
 export default function ItemDetails() {
@@ -27,23 +29,57 @@ export default function ItemDetails() {
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [resolved, setResolved] = useState(false);
+  const [similarMatches, setSimilarMatches] = useState<SimilarItemMatch[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState('');
 
   useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+
     const load = async () => {
-      if (!id) return;
       setLoading(true);
+      setSimilarLoading(false);
       setError('');
+      setSimilarError('');
+      setSimilarMatches([]);
+
+      let data: Item | null = null;
       try {
-        const data = await fetchItemById(id);
+        data = await fetchItemById(id);
+        if (cancelled) return;
         setItem(data);
-      } catch (err) {
-        setError('Failed to load item details');
-        setItem(null);
+      } catch {
+        if (!cancelled) {
+          setError('Failed to load item details');
+          setItem(null);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
+      }
+
+      if (!data || cancelled) return;
+
+      setSimilarLoading(true);
+      try {
+        const { matches } = await getSimilarItems(data._id);
+        if (!cancelled) {
+          setSimilarMatches(Array.isArray(matches) ? matches : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setSimilarError('Could not load possible matches. You can still view this item.');
+          setSimilarMatches([]);
+        }
+      } finally {
+        if (!cancelled) setSimilarLoading(false);
       }
     };
+
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const handleResolve = async () => {
@@ -273,6 +309,104 @@ export default function ItemDetails() {
             )}
           </div>
         </div>
+
+        <section className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-8" aria-labelledby="possible-matches-heading">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
+              <Sparkles className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <h2 id="possible-matches-heading" className="text-lg font-bold text-gray-900">
+                Possible Matches
+              </h2>
+              <p
+                className={`mt-1.5 text-sm font-semibold rounded-lg px-3 py-1.5 inline-block ${
+                  isLost ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 'bg-red-50 text-red-800 border border-red-100'
+                }`}
+              >
+                {isLost ? 'Similar FOUND items' : 'Similar LOST items'}
+              </p>
+              <p className="text-xs text-gray-500 mt-2 max-w-xl">
+                Suggestions use category, title, description, and location keywords compared to opposite-type listings
+                that are still pending.
+              </p>
+            </div>
+          </div>
+
+          {similarLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              Loading possible matches…
+            </div>
+          )}
+
+          {!similarLoading && similarError && (
+            <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-100 rounded-xl text-amber-800 text-sm mb-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {similarError}
+            </div>
+          )}
+
+          {!similarLoading && !similarError && similarMatches.length === 0 && (
+            <p className="text-sm text-gray-500 py-2">No similar lost/found items found yet.</p>
+          )}
+
+          {!similarLoading && similarMatches.length > 0 && (
+            <ul className="space-y-4 mt-2">
+              {similarMatches.map(({ item: m, score, reasons }) => {
+                const mLost = m.type === 'lost';
+                return (
+                  <li
+                    key={m._id}
+                    className="border border-gray-100 rounded-xl p-4 sm:p-5 bg-gray-50/80 hover:bg-white hover:border-blue-200 transition-colors"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                      <div>
+                        <h3 className="font-semibold text-gray-900 text-base">{m.title}</h3>
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <span
+                            className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase ${
+                              mLost ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+                            }`}
+                          >
+                            {mLost ? 'Lost' : 'Found'}
+                          </span>
+                          <span className="text-xs text-gray-600 bg-white border border-gray-200 rounded-full px-2.5 py-0.5">
+                            {m.category}
+                          </span>
+                          <span className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2.5 py-0.5">
+                            Score: {score}
+                          </span>
+                        </div>
+                      </div>
+                      <Link
+                        to={`/item/${m._id}`}
+                        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap"
+                      >
+                        View item
+                        <ArrowRight className="w-4 h-4" />
+                      </Link>
+                    </div>
+                    <div className="flex items-start gap-2 text-sm text-gray-600 mb-3">
+                      <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                      <span>{m.location}</span>
+                    </div>
+                    {reasons.length > 0 && (
+                      <div className="border-t border-gray-100 pt-3">
+                        <p className="text-xs font-medium text-gray-500 mb-1.5">Why it matched</p>
+                        <ul className="list-disc list-inside text-xs text-gray-600 space-y-0.5">
+                          {reasons.map((r, i) => (
+                            <li key={i}>{r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
       </div>
     </div>
   );

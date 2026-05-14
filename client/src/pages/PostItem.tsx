@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import {
   AlertCircle,
   CheckCircle,
@@ -19,7 +20,7 @@ import { useAuth } from '../context/AuthContext';
 
 export default function PostItem() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
 
   const [form, setForm] = useState({
     title: '',
@@ -46,16 +47,18 @@ export default function PostItem() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
-    
-    // 6. ADD SAFETY CHECK
-    if (!user || !user._id) {
-      setError('Please login again');
+
+    const token = localStorage.getItem('token');
+    if (!user || !token) {
+      navigate('/login', {
+        replace: true,
+        state: { sessionMessage: 'You must be signed in to post an item.' },
+      });
       return;
     }
-    
+
     setLoading(true);
     try {
-      // Create strictly structured payload excluding postedBy (which is added in createItem)
       const payload = {
         title: form.title,
         description: form.description,
@@ -67,23 +70,11 @@ export default function PostItem() {
         contact_email: form.contact_email,
         contact_phone: form.contact_phone || null,
       };
-      
-      // 2. IDENTIFY WHAT userId IS (temporary logs)
-      console.log("userId passed:", user._id);
-      console.log("user object:", user);
-      
-      // 7. VERIFY FINAL PAYLOAD
-      console.log("FINAL PAYLOAD:", {
-        ...payload,
-        postedBy: user._id
-      });
-      
-      // 4. FIX CALLER -> strictly passing user._id as second arg
-      await createItem(payload, user._id);
-      
-      // 5. FETCH ITEMS FOR MATCHING
+
+      await createItem(payload);
+
       const allItems = await fetchItems();
-      
+
       const getWords = (text: string) => text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
       const currentWords = [...getWords(form.title), ...getWords(form.description)];
       const currentLocWords = getWords(form.location);
@@ -105,10 +96,21 @@ export default function PostItem() {
 
       setMatches(possibleMatches);
       setSuccess(true);
-    } catch (err: any) {
-      console.log("FULL ERROR:", err);
-      console.log("BACKEND ERROR:", err.response?.data);
-      setError(err.response?.data?.message || err.message || 'Failed to submit item');
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err) && err.response?.status === 401) {
+        const msg =
+          typeof (err.response?.data as { message?: string } | undefined)?.message === 'string'
+            ? (err.response?.data as { message: string }).message
+            : 'Your session is invalid or has expired. Please sign in again.';
+        await signOut();
+        navigate('/login', { replace: true, state: { sessionMessage: msg } });
+        return;
+      }
+      const data =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { message?: string } } }).response?.data
+          : undefined;
+      setError(data?.message ?? (err instanceof Error ? err.message : 'Failed to submit item'));
     } finally {
       setLoading(false);
     }

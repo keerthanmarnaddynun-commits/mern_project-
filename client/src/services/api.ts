@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Item } from '../types';
+import type { Item, SimilarItemsResponse } from '../types';
 
 const API = axios.create({ baseURL: 'http://localhost:5000/api' });
 
@@ -24,6 +24,11 @@ export async function fetchItemById(id: string): Promise<Item | null> {
   return response.data || null;
 }
 
+export async function getSimilarItems(itemId: string): Promise<SimilarItemsResponse> {
+  const response = await API.get<SimilarItemsResponse>(`/items/${itemId}/similar`);
+  return response.data;
+}
+
 interface CreateItemPayload {
   title: string;
   description: string;
@@ -36,11 +41,8 @@ interface CreateItemPayload {
   contact_phone?: string | null;
 }
 
-export async function createItem(item: CreateItemPayload, userId: string): Promise<Item> {
-  const response = await API.post('/items', {
-    ...item,
-    postedBy: userId,
-  });
+export async function createItem(item: CreateItemPayload): Promise<Item> {
+  const response = await API.post('/items', item);
   return response.data;
 }
 

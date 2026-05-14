@@ -18,6 +18,17 @@ export interface Item {
   createdAt: string;
 }
 
+export interface SimilarItemMatch {
+  item: Item;
+  score: number;
+  reasons: string[];
+}
+
+export interface SimilarItemsResponse {
+  currentItem: Item;
+  matches: SimilarItemMatch[];
+}
+
 export interface User {
   _id: string;
   name: string;

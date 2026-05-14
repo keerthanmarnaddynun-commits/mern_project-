@@ -25,7 +25,7 @@ export default function Dashboard() {
       try {
         const data = await fetchItems(typeFilter === 'all' ? undefined : typeFilter);
         setItems(data);
-      } catch (err) {
+      } catch {
         setError('Failed to load items');
         setItems([]);
       } finally {
