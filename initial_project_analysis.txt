@@ -1,5 +1,5 @@
 ================================================================================
-  LOST FOUND (MERN) — PROJECT STATUS REPORT
+   LOST FOUND (MERN) — PROJECT STATUS REPORT
   Generated from prior codebase review (no re-scan)
 ================================================================================
 

@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, type FormEvent, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import {
   AlertCircle,
@@ -20,19 +20,31 @@ import { useAuth } from '../context/AuthContext';
 
 export default function PostItem() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, signOut } = useAuth();
 
   const [form, setForm] = useState({
     title: '',
     description: '',
-    category: 'Other',
-    type: 'lost' as 'lost' | 'found',
+    category: location.state?.prefillCategory || 'Other',
+    type: (location.state?.prefillType as 'lost' | 'found') || 'lost',
     location: '',
     date_occurred: new Date().toISOString().split('T')[0],
     image_url: '',
     contact_email: user?.email ?? '',
     contact_phone: '',
   });
+
+  useEffect(() => {
+    if (location.state?.prefillCategory || location.state?.prefillType) {
+      setForm(prev => ({
+        ...prev,
+        category: location.state.prefillCategory || prev.category,
+        type: location.state.prefillType || prev.type,
+      }));
+    }
+  }, [location.state]);
+
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);

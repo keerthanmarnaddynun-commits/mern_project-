@@ -1,4 +1,18 @@
+# dependencies
 node_modules/
-.env
 client/node_modules/
 server/node_modules/
+
+# env files
+server/.env
+client/.env
+.env
+
+# build outputs
+dist/
+build/
+
+# OS/editor files
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,47 +1,31 @@
 const Item = require('../models/Item');
-
-/**
- * Generic / low-signal tokens only — do NOT include real product identifiers
- * (iphone, laptop, dell, hp, wallet, keys, charger, etc.)
- */
-const STOPWORDS = new Set([
-  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'any', 'can', 'her', 'was', 'one', 'our', 'out', 'day',
-  'get', 'has', 'him', 'his', 'how', 'its', 'let', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'did',
-  'she', 'use', 'had', 'been', 'from', 'with', 'that', 'this', 'have', 'will', 'your', 'what', 'when', 'them',
-  'they', 'than', 'then', 'here', 'there', 'where', 'which', 'while', 'would', 'could', 'should', 'about', 'after',
-  'before', 'above', 'below', 'into', 'onto', 'once', 'only', 'both', 'each', 'more', 'most', 'some', 'such',
-  'very', 'just', 'also', 'back', 'even', 'much', 'same', 'other', 'help', 'please', 'looking', 'someone', 'anyone',
-  'lost', 'found', 'item', 'items', 'thing', 'things', 'object', 'objects', 'near', 'around', 'campus', 'college',
-]);
-
-function tokenize(text) {
-  if (!text || typeof text !== 'string') return new Set();
-  const words = text
-    .toLowerCase()
-    .split(/\W+/)
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
-  return new Set(words);
-}
-
-function intersectionWords(setA, setB) {
-  const out = [];
-  for (const w of setA) {
-    if (setB.has(w)) out.push(w);
-  }
-  return out;
-}
-
-function confidenceRank(confidence) {
-  if (confidence === 'Extremely Strong Match') return 3;
-  if (confidence === 'Very Strong Match') return 2;
-  return 1;
-}
+const Activity = require('../models/Activity');
+const { matchOppositePendingSameCategory, confidenceRank } = require('../utils/itemSimilarity');
 
 const getItems = async (req, res) => {
   try {
     const { status } = req.query;
-    const query = status ? { type: status } : {};
+    
+    // Public browse/list should only show active items
+    const query = {
+      status: { $ne: 'resolved' },
+      is_resolved: { $ne: true }
+    };
+
+    if (status) {
+      query.type = status;
+    }
+
     const items = await Item.find(query).sort({ createdAt: -1 });
+    res.status(200).json(items);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+const getMyReports = async (req, res) => {
+  try {
+    const items = await Item.find({ postedBy: req.user._id }).sort({ createdAt: -1 });
     res.status(200).json(items);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -88,6 +72,21 @@ const createItem = async (req, res) => {
     });
 
     await newItem.save();
+
+    try {
+      await Activity.create({
+        type: 'item_reported',
+        message: `User reported a ${newItem.type} item: "${newItem.title}"`,
+        actorName: req.user.name,
+        actorEmail: req.user.email,
+        itemTitle: newItem.title,
+        itemId: newItem._id,
+        userId: req.user._id
+      });
+    } catch (logErr) {
+      console.error('Activity log error:', logErr);
+    }
+
     res.status(201).json(newItem);
   } catch (error) {
     console.error("CREATE ITEM ERROR:", error);
@@ -98,11 +97,7 @@ const createItem = async (req, res) => {
 const updateItem = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-
-    if (!status) {
-      return res.status(400).json({ message: 'Status field is required' });
-    }
+    const allowedUpdates = ['title', 'description', 'category', 'location', 'date_occurred', 'image_url', 'contact_email', 'contact_phone'];
 
     const item = await Item.findById(id);
     if (!item) {
@@ -113,9 +108,17 @@ const updateItem = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to update this item' });
     }
 
-    item.status = status;
-    item.is_resolved = status === 'resolved';
-    await item.save();
+    let isModified = false;
+    allowedUpdates.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        item[field] = req.body[field];
+        isModified = true;
+      }
+    });
+
+    if (isModified) {
+      await item.save();
+    }
 
     res.status(200).json(item);
   } catch (error) {
@@ -167,47 +170,12 @@ const getSimilarItems = async (req, res) => {
       _id: { $ne: current._id },
     }).lean();
 
-    const curTitleTok = tokenize(current.title);
-    const curDescTok = tokenize(current.description);
-    const curLocTok = tokenize(current.location);
-
     const matches = [];
 
     for (const cand of candidates) {
-      const candTitleTok = tokenize(cand.title);
-      const titleOverlap = intersectionWords(curTitleTok, candTitleTok);
-
-      // Mandatory: at least one meaningful title keyword in common
-      if (titleOverlap.length === 0) {
-        continue;
-      }
-
-      const descOverlap = intersectionWords(curDescTok, tokenize(cand.description));
-      const locOverlap = intersectionWords(curLocTok, tokenize(cand.location));
-      const hasDesc = descOverlap.length > 0;
-      const hasLoc = locOverlap.length > 0;
-
-      let confidence;
-      if (hasLoc && hasDesc) {
-        confidence = 'Extremely Strong Match';
-      } else if (hasLoc || hasDesc) {
-        confidence = 'Very Strong Match';
-      } else {
-        confidence = 'Strong Match';
-      }
-
-      const reasons = [];
-      reasons.push(`Same category: ${current.category}`);
-      reasons.push(`Title keyword overlap: ${titleOverlap.join(', ')}`);
-      if (hasLoc) {
-        reasons.push(`Location keyword overlap: ${locOverlap.join(', ')}`);
-      }
-      if (hasDesc) {
-        reasons.push(`Description keyword overlap: ${descOverlap.join(', ')}`);
-      }
-      reasons.push(`Confidence: ${confidence}`);
-
-      matches.push({ item: cand, confidence, reasons });
+      const m = matchOppositePendingSameCategory(current, cand);
+      if (!m) continue;
+      matches.push({ item: cand, confidence: m.confidence, reasons: m.reasons });
     }
 
     matches.sort((a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence));
@@ -224,6 +192,7 @@ const getSimilarItems = async (req, res) => {
 
 module.exports = {
   getItems,
+  getMyReports,
   getItemById,
   getSimilarItems,
   createItem,

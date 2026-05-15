@@ -15,6 +15,10 @@ const connectDB = require('./config/db');
 // Route imports
 const authRoutes = require('./routes/authRoutes');
 const itemRoutes = require('./routes/itemRoutes');
+const claimRoutes = require('./routes/claimRoutes');
+const userRoutes = require('./routes/userRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const publicRoutes = require('./routes/publicRoutes');
 
 const app = express();
 
@@ -39,6 +43,10 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/items', itemRoutes);
+app.use('/api/claims', claimRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/public', publicRoutes);
 
 // Test route
 app.get('/', (req, res) => {

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { MapPin, Calendar, Tag, ArrowRight } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import type { Item } from '../types';
 
 interface ItemCardProps {
@@ -7,7 +8,9 @@ interface ItemCardProps {
 }
 
 export default function ItemCard({ item }: ItemCardProps) {
+  const { user } = useAuth();
   const isLost = item.type === 'lost';
+  const isOwner = user ? user._id === item.postedBy : false;
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('en-US', {
@@ -20,7 +23,11 @@ export default function ItemCard({ item }: ItemCardProps) {
   return (
     <Link
       to={`/item/${item._id}`}
-      className="group bg-white rounded-2xl border border-gray-100 hover:border-blue-200 hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col"
+      className={`group rounded-2xl border hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col ${
+        isOwner 
+          ? 'bg-indigo-50/60 border-indigo-200 border-l-4 border-l-indigo-500 shadow-md shadow-indigo-100/50 hover:border-indigo-300' 
+          : 'bg-white border-gray-100 hover:border-blue-200'
+      }`}
     >
       <div className="relative h-44 bg-gray-100 overflow-hidden">
         {item.image_url ? (
@@ -72,9 +79,16 @@ export default function ItemCard({ item }: ItemCardProps) {
         </div>
 
         <div className="mt-3 flex items-center justify-between">
-          <span className="text-xs text-gray-400">
-            {new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">
+              {new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </span>
+            {isOwner && (
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-md shadow-sm">
+                Your report
+              </span>
+            )}
+          </div>
           <span className="flex items-center gap-1 text-xs font-medium text-blue-600 group-hover:gap-2 transition-all">
             View details <ArrowRight className="w-3.5 h-3.5" />
           </span>

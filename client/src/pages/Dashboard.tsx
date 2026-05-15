@@ -32,6 +32,7 @@ export default function Dashboard() {
         setLoading(false);
       }
     };
+
     load();
   }, [typeFilter]);
 
@@ -90,6 +91,22 @@ export default function Dashboard() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Community Activity CTA */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-8 mb-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-sm">
+          <div className="text-center sm:text-left">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Community Activity</h2>
+            <p className="text-gray-500 leading-relaxed max-w-2xl">
+              See how the community is helping recover lost items with live statistics and insights.
+            </p>
+          </div>
+          <Link
+            to="/community-activity"
+            className="whitespace-nowrap px-8 py-4 bg-blue-600 text-white hover:bg-blue-700 font-bold rounded-2xl text-sm transition-all shadow-xl shadow-blue-100 active:scale-[0.98]"
+          >
+            Explore Activity
+          </Link>
+        </div>
+
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-2">
             {(['all', 'lost', 'found'] as FilterType[]).map((t) => (

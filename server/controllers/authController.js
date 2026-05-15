@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Activity = require('../models/Activity');
 
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -63,6 +64,18 @@ const registerUser = async (req, res) => {
 
     const token = signToken(user._id);
 
+    try {
+      await Activity.create({
+        type: 'user_registered',
+        message: `New user registered: ${user.name} (${user.email})`,
+        actorName: user.name,
+        actorEmail: user.email,
+        userId: user._id
+      });
+    } catch (logErr) {
+      console.error('Activity log error:', logErr);
+    }
+
     return res.status(201).json({
       token,
       user: toPublicUser(user),
@@ -89,6 +102,27 @@ const loginUser = async (req, res) => {
 
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    const inputEmail = String(email).toLowerCase().trim();
+    const inputPassword = String(password).trim();
+    const adminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+    const adminPassword = String(process.env.ADMIN_PASSWORD || '').trim();
+
+    if (inputEmail === adminEmail && inputPassword === adminPassword && adminEmail !== '') {
+      const token = jwt.sign(
+        { email: adminEmail, role: 'admin' },
+        process.env.JWT_SECRET,
+        { expiresIn: '1d' }
+      );
+      return res.status(200).json({
+        token,
+        admin: {
+          email: adminEmail,
+          role: 'admin'
+        },
+        isAdmin: true
+      });
     }
 
     const emailNorm = String(email).toLowerCase().trim();

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 import {
   ArrowLeft,
   MapPin,
@@ -10,28 +11,62 @@ import {
   CheckCircle,
   AlertCircle,
   Trash2,
-  User,
   Clock,
   Sparkles,
   ArrowRight,
+  Handshake,
+  Edit2,
+  Info,
+  PlusCircle,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
-import { fetchItemById, markResolved, deleteItem, getSimilarItems } from '../services/api';
-import type { Item, SimilarItemMatch } from '../types';
+import { fetchItemById, deleteItem, getSimilarItems, createClaim, getClaimStatus, updateItem, getMyReports, createManualClaim } from '../services/api';
+import type { ClaimStatusResponse, Item, SimilarItemMatch } from '../types';
 import { useAuth } from '../context/AuthContext';
 
 export default function ItemDetails() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const previousMatchId = location.state?.previousMatchId;
   const { user } = useAuth();
   const [item, setItem] = useState<Item | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
-  const [resolved, setResolved] = useState(false);
   const [similarMatches, setSimilarMatches] = useState<SimilarItemMatch[]>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarError, setSimilarError] = useState('');
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
+  const [claimSubmitted, setClaimSubmitted] = useState(false);
+  const [claimNoRetry, setClaimNoRetry] = useState(false);
+  const [claimError, setClaimError] = useState('');
+  const [claimStatus, setClaimStatus] = useState<ClaimStatusResponse | null>(null);
+  const [claimStatusLoading, setClaimStatusLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [editSuccess, setEditSuccess] = useState(false);
+  const [editData, setEditData] = useState({
+    title: '',
+    description: '',
+    category: '',
+    location: '',
+    date_occurred: '',
+    image_url: '',
+    contact_email: '',
+    contact_phone: '',
+  });
+
+  // Manual Review State
+  const [showManualModal, setShowManualModal] = useState(false);
+  const [userPendingLostItems, setUserPendingLostItems] = useState<Item[]>([]);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualSelectedLost, setManualSelectedLost] = useState('');
+  const [manualReasonType, setManualReasonType] = useState('');
+  const [manualReasonText, setManualReasonText] = useState('');
+  const [manualError, setManualError] = useState('');
 
   useEffect(() => {
     if (!id) return;
@@ -43,6 +78,11 @@ export default function ItemDetails() {
       setError('');
       setSimilarError('');
       setSimilarMatches([]);
+      setClaimSubmitted(false);
+      setClaimNoRetry(false);
+      setClaimError('');
+      setClaimStatus(null);
+      setClaimStatusLoading(false);
 
       let data: Item | null = null;
       try {
@@ -64,7 +104,12 @@ export default function ItemDetails() {
       try {
         const { matches } = await getSimilarItems(data._id);
         if (!cancelled) {
-          setSimilarMatches(Array.isArray(matches) ? matches : []);
+          const validMatches = Array.isArray(matches) ? matches : [];
+          setSimilarMatches(
+            previousMatchId
+              ? validMatches.filter((m) => m.item._id !== previousMatchId)
+              : validMatches
+          );
         }
       } catch {
         if (!cancelled) {
@@ -82,22 +127,96 @@ export default function ItemDetails() {
     };
   }, [id]);
 
-  const handleResolve = async () => {
+  useEffect(() => {
+    if (!item || item.type !== 'found' || !user) {
+      setClaimStatus(null);
+      setClaimStatusLoading(false);
+      return;
+    }
+    if (String(user._id) === String(item.postedBy)) {
+      setClaimStatus(null);
+      setClaimStatusLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setClaimStatusLoading(true);
+    getClaimStatus(item._id)
+      .then((s) => {
+        if (!cancelled) {
+          setClaimStatus(s);
+          setClaimError('');
+          if (s.hasClaimed) setClaimNoRetry(false);
+          setClaimStatusLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setClaimStatusLoading(false);
+          setClaimStatus(null);
+        }
+      });
+
+    // Also fetch lost items early for manual review check
+    getMyReports().then(reports => {
+      if (!cancelled) {
+        const pendingLost = reports.filter(r => r.type === 'lost' && r.status === 'pending');
+        setUserPendingLostItems(pendingLost);
+      }
+    }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item, user]);
+
+  const handleOpenEdit = () => {
     if (!item) return;
-    setActionLoading(true);
+    setEditData({
+      title: item.title,
+      description: item.description,
+      category: item.category,
+      location: item.location,
+      date_occurred: new Date(item.date_occurred).toISOString().split('T')[0],
+      image_url: item.image_url || '',
+      contact_email: item.contact_email,
+      contact_phone: item.contact_phone || '',
+    });
+    setEditError('');
+    setEditSuccess(false);
+    setShowEditModal(true);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!item) return;
+    setEditLoading(true);
+    setEditError('');
     try {
-      await markResolved(item._id);
-      setResolved(true);
-      setItem((p) => p ? { ...p, status: 'resolved', is_resolved: true } : p);
+      const updated = await updateItem(item._id, {
+        ...editData,
+        image_url: editData.image_url || null,
+        contact_phone: editData.contact_phone || null,
+      });
+      setItem(updated);
+      setEditSuccess(true);
+      setTimeout(() => {
+        setShowEditModal(false);
+        setEditSuccess(false);
+      }, 1500);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to mark as resolved');
+      if (axios.isAxiosError(err)) {
+        setEditError(err.response?.data?.message || 'Failed to update item');
+      } else {
+        setEditError(err instanceof Error ? err.message : 'Failed to update item');
+      }
     } finally {
-      setActionLoading(false);
+      setEditLoading(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!item || !confirm('Are you sure you want to delete this item?')) return;
+    if (!item) return;
     setActionLoading(true);
     try {
       await deleteItem(item._id);
@@ -105,6 +224,116 @@ export default function ItemDetails() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to delete item');
       setActionLoading(false);
+    }
+  };
+
+  const handleClaim = async () => {
+    if (!item) return;
+    setClaimError('');
+    const token = localStorage.getItem('token');
+    if (!user || !token) {
+      navigate('/login', {
+        replace: false,
+        state: { sessionMessage: 'Please sign in to submit a claim.' },
+      });
+      return;
+    }
+    setClaimSubmitting(true);
+    try {
+      await createClaim(item._id);
+      setClaimError('');
+      setClaimSubmitted(true);
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        const msg = (err.response?.data as { message?: string } | undefined)?.message;
+        if (status === 409) {
+          setClaimNoRetry(true);
+          setClaimError(msg || 'You have already submitted a claim for this item.');
+        } else if (status === 403) {
+          const raw = msg || '';
+          if (raw.toLowerCase().includes('matching')) {
+            setClaimError('Report a matching lost item before claiming this item.');
+            setClaimNoRetry(false);
+          } else {
+            setClaimError(raw || 'You cannot perform this action.');
+            setClaimNoRetry(true);
+          }
+        } else if (status === 401) {
+          setClaimError('Please sign in again to submit a claim.');
+          navigate('/login', { state: { sessionMessage: 'Your session expired. Please sign in again.' } });
+        } else if (status === 400) {
+          setClaimError(msg || 'This item cannot be claimed.');
+          setClaimNoRetry(true);
+        } else if (status === 404) {
+          setClaimError(msg || 'Item not found.');
+        } else {
+          setClaimError(msg || 'Could not submit claim. Try again later.');
+        }
+      } else {
+        setClaimError('Could not submit claim. Try again later.');
+      }
+    } finally {
+      setClaimSubmitting(false);
+      if (item?.type === 'found' && user && localStorage.getItem('token')) {
+        try {
+          const s = await getClaimStatus(item._id);
+          setClaimStatus(s);
+          if (s.hasClaimed) {
+            setClaimNoRetry(false);
+            setClaimSubmitted(false);
+            setClaimError('');
+          }
+        } catch {
+          /* keep prior claimStatus */
+        }
+      }
+    }
+  };
+
+  const handleOpenManualModal = async () => {
+    setManualError('');
+    setManualLoading(true);
+    setShowManualModal(true);
+    try {
+      const items = await getMyReports();
+      const pendingLost = items.filter(i => i.type === 'lost' && i.status === 'pending');
+      setUserPendingLostItems(pendingLost);
+      if (pendingLost.length > 0) {
+        setManualSelectedLost(pendingLost[0]._id);
+      }
+    } catch (err) {
+      setManualError('Could not load your lost items.');
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const handleSubmitManualClaim = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!item || !manualSelectedLost || !manualReasonType) return;
+    
+    setManualError('');
+    setManualLoading(true);
+    try {
+      await createManualClaim(item._id, {
+        lostItemId: manualSelectedLost,
+        reasonType: manualReasonType,
+        reasonText: manualReasonType === 'other' ? manualReasonText : ''
+      });
+      setShowManualModal(false);
+      setClaimSubmitted(true);
+      setClaimNoRetry(true);
+      setClaimStatus(prev => prev ? { ...prev, hasClaimed: true, canClaim: false } : null);
+      alert('Manual review submitted successfully.');
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        setManualError(err.response?.data?.message || 'Could not submit manual claim.');
+      } else {
+        setManualError('An unexpected error occurred.');
+      }
+    } finally {
+      setManualLoading(false);
     }
   };
 
@@ -174,21 +403,40 @@ export default function ItemDetails() {
     );
   }
 
-  const isOwner = user?._id === item.postedBy;
+  const isOwner = user != null && String(user._id) === String(item.postedBy);
   const isLost = item.type === 'lost';
+  const itemIsPending = item.status === 'pending' && !item.is_resolved;
+  const showClaimCta =
+    user != null &&
+    !isOwner &&
+    itemIsPending &&
+    !isLost &&
+    claimStatus?.canClaim === true &&
+    !claimStatusLoading &&
+    !claimNoRetry;
+
+  const claimSuccessBanner = claimStatus?.hasClaimed === true || claimSubmitted;
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
-        <Link
-          to="/dashboard"
-          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-6 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to all items
-        </Link>
+        <div className="flex items-center justify-between mb-6">
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to all items
+          </Link>
+          
+          {previousMatchId && (
+            <span className="text-xs font-medium text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full">
+              Arrived from a related item
+            </span>
+          )}
+        </div>
 
         {error && (
           <div className="mb-4 flex items-center gap-2.5 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
@@ -197,7 +445,7 @@ export default function ItemDetails() {
           </div>
         )}
 
-        {(item.status === 'resolved' || item.is_resolved || resolved) && (
+        {(item.status === 'resolved' || item.is_resolved) && (
           <div className="mb-4 flex items-center gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-sm">
             <CheckCircle className="w-4 h-4" />
             Item marked as resolved
@@ -272,50 +520,192 @@ export default function ItemDetails() {
               </div>
             </div>
 
-            <div className="border-t border-gray-100 pt-6">
-              <p className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
-                <User className="w-4 h-4 text-gray-400" />
-                Contact the reporter
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <a
-                  href={`mailto:${item.contact_email}`}
-                  className="flex items-center gap-2.5 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
-                >
-                  <Mail className="w-4 h-4" />
-                  {item.contact_email}
-                </a>
-                {item.contact_phone && (
+            {isLost ? (
+              <div className="border-t border-gray-100 pt-6">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Reporter contact</p>
+                <div className="flex flex-col sm:flex-row gap-3">
                   <a
-                    href={`tel:${item.contact_phone}`}
-                    className="flex items-center gap-2.5 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
+                    href={`mailto:${item.contact_email}`}
+                    className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
                   >
-                    <Phone className="w-4 h-4" />
-                    {item.contact_phone}
+                    <Mail className="w-4 h-4 text-gray-500" />
+                    {item.contact_email}
                   </a>
-                )}
+                  {item.contact_phone && (
+                    <a
+                      href={`tel:${item.contact_phone}`}
+                      className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
+                    >
+                      <Phone className="w-4 h-4 text-gray-500" />
+                      {item.contact_phone}
+                    </a>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="border-t border-gray-100 pt-6">
+                {itemIsPending && user && !isOwner && (
+                  <>
+                    <h3 className="text-lg font-semibold text-gray-900">Think this item belongs to you?</h3>
+                    <p className="text-xs text-gray-500 mt-1.5 mb-4 max-w-lg leading-relaxed">
+                      You can claim this item if you have reported a matching lost item.
+                    </p>
 
-            {isOwner && item.status === 'pending' && !item.is_resolved && !resolved && (
+                    {claimStatusLoading && (
+                      <p className="text-xs text-gray-400 mb-4 flex items-center gap-2">
+                        <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                        Checking claim eligibility…
+                      </p>
+                    )}
+
+                    {!claimStatusLoading &&
+                      claimStatus &&
+                      !claimStatus.hasClaimed &&
+                      !claimStatus.canClaim &&
+                      claimStatus.reason && (
+                        <div className="mb-4 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed">
+                          {claimStatus.reason}
+                        </div>
+                      )}
+
+                    {claimSuccessBanner && (
+                      <div className="flex items-center gap-2 p-3.5 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-800 text-sm font-medium mb-4">
+                        <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                        {claimStatus?.hasClaimed ? 'Claim already submitted' : 'Claim Submitted'}
+                      </div>
+                    )}
+
+                    {claimError && (
+                      <div className="mb-4 flex items-center gap-2 p-3.5 bg-amber-50 border border-amber-100 rounded-xl text-amber-900 text-sm">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        {claimError}
+                      </div>
+                    )}
+
+                    {showClaimCta && (
+                      <button
+                        type="button"
+                        onClick={handleClaim}
+                        disabled={claimSubmitting || !claimStatus?.canClaim}
+                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl shadow-sm transition-colors mb-5"
+                      >
+                        {claimSubmitting ? (
+                          <>
+                            <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Submitting…
+                          </>
+                        ) : (
+                          <>
+                            <Handshake className="w-4 h-4" />
+                            Claim this item
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    {user != null && !isOwner && itemIsPending && !isLost && !claimStatusLoading && claimStatus && !claimStatus.canClaim && !claimStatus.hasClaimed && !claimSubmitted && (
+                      <div className="mt-6 border-t border-gray-100 pt-6">
+                        {userPendingLostItems.length > 0 ? (
+                          <>
+                            <h4 className="text-sm font-bold text-gray-800 mb-2">Think this may still be your item?</h4>
+                            <p className="text-xs text-gray-500 mb-4 max-w-lg leading-relaxed">
+                              If the automatic system didn't match your lost report due to differing categories or descriptions, you can request a manual review by an admin.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={handleOpenManualModal}
+                              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 text-sm font-semibold rounded-lg shadow-sm transition-colors"
+                            >
+                              Request Manual Review
+                            </button>
+                          </>
+                        ) : (
+                          <div className="bg-amber-50/50 border border-amber-100 rounded-2xl p-6">
+                            <div className="flex items-center gap-3 mb-3">
+                              <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
+                                <Info className="w-5 h-5" />
+                              </div>
+                              <h4 className="text-base font-bold text-gray-900">Want to request a manual review?</h4>
+                            </div>
+                            <p className="text-sm text-gray-600 mb-6 leading-relaxed">
+                              You currently don’t have any active lost item reports. To request a manual review, first create a lost item report that may match this found item.
+                            </p>
+                            <button
+                              onClick={() => navigate('/post', { state: { prefillCategory: item.category, prefillType: 'lost' } })}
+                              className="flex items-center justify-center gap-2 px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-amber-100"
+                            >
+                              <PlusCircle className="w-4 h-4" />
+                              Report Lost Item
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {itemIsPending && user && isOwner && (
+                  <p className="text-xs text-gray-600 mb-5">
+                    You posted this found item. Others can claim it only if they have a matching lost report.
+                  </p>
+                )}
+
+                {itemIsPending && !user && (
+                  <p className="text-sm text-gray-600 mb-5">
+                    <Link to="/login" className="text-blue-600 font-medium hover:text-blue-700">
+                      Sign in
+                    </Link>{' '}
+                    to claim this item if you have a matching lost listing.
+                  </p>
+                )}
+
+                {!itemIsPending && (
+                  <p className="text-xs text-gray-500 mb-5">Claims are not available for resolved listings.</p>
+                )}
+
+                <div className="border-t border-gray-100 pt-5">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Reporter contact</p>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <a
+                      href={`mailto:${item.contact_email}`}
+                      className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
+                    >
+                      <Mail className="w-4 h-4 text-gray-500" />
+                      {item.contact_email}
+                    </a>
+                    {item.contact_phone && (
+                      <a
+                        href={`tel:${item.contact_phone}`}
+                        className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
+                      >
+                        <Phone className="w-4 h-4 text-gray-500" />
+                        {item.contact_phone}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isOwner && item.status === 'pending' && !item.is_resolved && (
               <div className="border-t border-gray-100 pt-6 mt-6">
                 <p className="text-xs text-gray-400 mb-3">Owner actions</p>
                 <div className="flex gap-3">
                   <button
-                    onClick={handleResolve}
+                    onClick={handleOpenEdit}
                     disabled={actionLoading}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-medium rounded-xl transition-colors"
+                    className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-xl transition-colors"
                   >
-                    <CheckCircle className="w-4 h-4" />
-                    Mark as Resolved
+                    <Edit2 className="w-4 h-4" />
+                    Edit Item
                   </button>
                   <button
-                    onClick={handleDelete}
+                    onClick={() => setShowDeleteConfirm(true)}
                     disabled={actionLoading}
                     className="flex items-center gap-2 px-4 py-2.5 border border-red-200 text-red-600 hover:bg-red-50 text-sm font-medium rounded-xl transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
-                    Delete
+                    Delete Item
                   </button>
                 </div>
               </div>
@@ -323,7 +713,8 @@ export default function ItemDetails() {
           </div>
         </div>
 
-        <section className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-8" aria-labelledby="possible-matches-heading">
+        {isOwner && (
+          <section className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-8" aria-labelledby="possible-matches-heading">
           <div className="flex items-start gap-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
               <Sparkles className="w-5 h-5 text-blue-600" />
@@ -367,10 +758,15 @@ export default function ItemDetails() {
             <ul className="space-y-3 mt-4">
               {similarMatches.map(({ item: m, confidence }) => {
                 const mLost = m.type === 'lost';
+                const isMatchOwner = user ? user._id === m.postedBy : false;
                 return (
                   <li
                     key={m._id}
-                    className="border border-gray-100 rounded-xl p-4 sm:p-5 bg-gray-50/60 hover:bg-white hover:border-gray-200 hover:shadow-sm transition-all"
+                    className={`border rounded-xl p-4 sm:p-5 transition-all ${
+                      isMatchOwner
+                        ? 'bg-indigo-50/60 border-indigo-200 border-l-4 border-l-indigo-500 shadow-md shadow-indigo-100/50 hover:border-indigo-300 hover:shadow-lg'
+                        : 'border-gray-100 bg-gray-50/60 hover:bg-white hover:border-gray-200 hover:shadow-sm'
+                    }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                       <div className="min-w-0 flex-1">
@@ -396,12 +792,20 @@ export default function ItemDetails() {
                           <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
                           <span className="leading-snug">{m.location}</span>
                         </div>
-                        <p className="text-[11px] text-gray-400 mt-2.5 leading-relaxed">
-                          Similar keywords and item details detected.
-                        </p>
+                        <div className="flex items-center gap-2 mt-2.5">
+                          <p className="text-[11px] text-gray-400 leading-relaxed">
+                            Similar keywords and item details detected.
+                          </p>
+                          {isMatchOwner && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-md shadow-sm">
+                              Your report
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <Link
                         to={`/item/${m._id}`}
+                        state={{ previousMatchId: item?._id }}
                         className="inline-flex items-center justify-center gap-1.5 self-start sm:self-center shrink-0 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-colors"
                       >
                         View item
@@ -413,8 +817,281 @@ export default function ItemDetails() {
               })}
             </ul>
           )}
-        </section>
+          </section>
+        )}
       </div>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Delete item?</h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Are you sure you want to delete this item? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={actionLoading}
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={actionLoading}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                {actionLoading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-xl my-8">
+            <h3 className="text-xl font-bold text-gray-900 mb-6">Edit Item</h3>
+            
+            {editError && (
+              <div className="mb-6 flex items-center gap-2 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {editError}
+              </div>
+            )}
+            
+            {editSuccess && (
+              <div className="mb-6 flex items-center gap-2 p-3.5 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-800 text-sm">
+                <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                Item updated successfully!
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} className="space-y-4 text-left">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                <input
+                  type="text"
+                  required
+                  value={editData.title}
+                  onChange={(e) => setEditData({ ...editData, title: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <textarea
+                  required
+                  rows={3}
+                  value={editData.description}
+                  onChange={(e) => setEditData({ ...editData, description: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                  <select
+                    required
+                    value={editData.category}
+                    onChange={(e) => setEditData({ ...editData, category: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  >
+                    <option value="">Select category...</option>
+                    <option value="Electronics">Electronics</option>
+                    <option value="Wallet/Keys">Wallet/Keys</option>
+                    <option value="Bags/Luggage">Bags/Luggage</option>
+                    <option value="Clothing">Clothing</option>
+                    <option value="Documents">Documents</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={editData.date_occurred}
+                    onChange={(e) => setEditData({ ...editData, date_occurred: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                <input
+                  type="text"
+                  required
+                  value={editData.location}
+                  onChange={(e) => setEditData({ ...editData, location: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Image URL (Optional)</label>
+                <input
+                  type="url"
+                  value={editData.image_url}
+                  onChange={(e) => setEditData({ ...editData, image_url: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Contact Email</label>
+                  <input
+                    type="email"
+                    required
+                    value={editData.contact_email}
+                    onChange={(e) => setEditData({ ...editData, contact_email: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Contact Phone (Optional)</label>
+                  <input
+                    type="tel"
+                    value={editData.contact_phone}
+                    onChange={(e) => setEditData({ ...editData, contact_phone: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  disabled={editLoading}
+                  className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editLoading}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-xl transition-colors"
+                >
+                  {editLoading ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {showManualModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-lg w-full shadow-xl my-8">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Request Manual Review</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              Submit this item for manual review by an administrator. Please select your matching lost item and explain why you believe it matches.
+            </p>
+
+            {manualError && (
+              <div className="mb-6 flex items-center gap-2 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {manualError}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitManualClaim} className="space-y-4 text-left">
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-1">Which exact lost item are you linking this found item to?</label>
+                <p className="text-xs text-gray-500 mb-3">Choose the lost report that best matches this found item.</p>
+                {userPendingLostItems.length === 0 && !manualLoading ? (
+                  <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-xl border border-amber-100">
+                    You have no pending lost items. Please report a lost item first.
+                  </p>
+                ) : userPendingLostItems.length === 1 && !manualLoading ? (
+                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4 flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                      <Tag className="w-5 h-5 text-indigo-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-gray-900 leading-tight">{userPendingLostItems[0].title}</p>
+                      <p className="text-xs text-gray-600 mt-1">{userPendingLostItems[0].category} • {formatDate(userPendingLostItems[0].date_occurred)}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <select
+                    required
+                    disabled={manualLoading}
+                    value={manualSelectedLost}
+                    onChange={(e) => setManualSelectedLost(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  >
+                    <option value="" disabled>Select a lost report...</option>
+                    {userPendingLostItems.map(item => (
+                      <option key={item._id} value={item._id}>
+                        {item.title} ({item.category})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason for manual review</label>
+                <select
+                  required
+                  disabled={manualLoading || userPendingLostItems.length === 0}
+                  value={manualReasonType}
+                  onChange={(e) => setManualReasonType(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                >
+                  <option value="" disabled>Select reason...</option>
+                  <option value="wrong_category">Wrong category selected</option>
+                  <option value="wording_difference">Different wording/title</option>
+                  <option value="location_mismatch">Location mismatch but details match</option>
+                  <option value="similar_appearance">Similar appearance/details</option>
+                  <option value="system_missed_match">System may have missed the match</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              {manualReasonType === 'other' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Please specify</label>
+                  <textarea
+                    required
+                    disabled={manualLoading}
+                    rows={3}
+                    value={manualReasonText}
+                    onChange={(e) => setManualReasonText(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none"
+                    placeholder="Provide additional details..."
+                  />
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setShowManualModal(false)}
+                  disabled={manualLoading}
+                  className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={manualLoading || userPendingLostItems.length === 0}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-xl transition-colors"
+                >
+                  {manualLoading ? 'Submitting...' : 'Submit Request'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

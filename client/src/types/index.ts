@@ -30,6 +30,14 @@ export interface SimilarItemsResponse {
   matches: SimilarItemMatch[];
 }
 
+export interface ClaimStatusResponse {
+  hasClaimed: boolean;
+  claimStatus: 'pending' | 'approved' | 'rejected' | null;
+  claimId: string | null;
+  canClaim: boolean;
+  reason: string | null;
+}
+
 export interface User {
   _id: string;
   name: string;

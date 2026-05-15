@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
-const { getItems, getItemById, getSimilarItems, createItem, updateItem, deleteItem } = require('../controllers/itemController');
+const { getItems, getMyReports, getItemById, getSimilarItems, createItem, updateItem, deleteItem } = require('../controllers/itemController');
 
 router.route('/').get(getItems).post(protect, createItem);
+router.get('/my-reports', protect, getMyReports);
 router.get('/:id/similar', getSimilarItems);
 router.route('/:id').get(getItemById).patch(protect, updateItem).delete(protect, deleteItem);
 

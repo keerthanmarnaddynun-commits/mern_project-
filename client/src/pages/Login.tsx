@@ -19,8 +19,15 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
-      navigate('/dashboard');
+      const res = await login(email, password);
+      if (res.isAdmin && res.token) {
+        localStorage.setItem('adminToken', res.token);
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        navigate('/admin');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid email or password');
     } finally {
@@ -121,6 +128,9 @@ export default function Login() {
             <Link to="/register" className="text-blue-600 hover:text-blue-700 font-medium">
               Create one
             </Link>
+          </p>
+          <p className="text-center mt-2 text-xs text-gray-400">
+            Admin users can also log in here.
           </p>
         </div>
       </div>

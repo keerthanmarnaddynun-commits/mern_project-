@@ -12,9 +12,10 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; isAdmin?: boolean; token?: string }>;
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signOut: () => Promise<void>;
+  updateUser: (user: User) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -83,17 +84,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     try {
-      const { data } = await API.post<{ token: string; user: unknown }>('/auth/login', {
+      const { data } = await API.post<{ token: string; user?: unknown; admin?: unknown; isAdmin?: boolean }>('/auth/login', {
         email,
         password,
       });
+
+      if (data.isAdmin) {
+        return { success: true, isAdmin: true, token: data.token };
+      }
+
       const { token, user: rawUser } = data;
       const nextUser = normalizeUser(rawUser);
       if (!token || !nextUser) {
         throw new Error('Invalid response from server');
       }
       persistSession(token, nextUser);
-      return { success: true };
+      return { success: true, isAdmin: false };
     } catch (error) {
       throw toAuthError(error, 'Login failed');
     }
@@ -123,8 +129,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
+  const updateUser = (updatedUser: User) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      persistSession(token, updatedUser);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, loading, login, signUp, signOut, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
