@@ -1,7 +1,8 @@
 const Item = require('../models/Item');
 const Claim = require('../models/Claim');
 const Activity = require('../models/Activity');
-const { isPlural } = require('../utils/titleKeyword');
+const { extractKeyword, isPlural } = require('../utils/titleKeyword');
+
 
 const getCommunityInsights = async (req, res) => {
   try {
@@ -71,16 +72,26 @@ const getCommunityInsights = async (req, res) => {
     }).sort({ createdAt: -1 }).limit(10).lean();
 
     const recentActivity = rawActivities.map(act => {
-      // Resolve the best available label: keyword > category > "item"
-      // Keyword is a whitelisted single noun extracted from the title (e.g. "watch", "laptop")
-      // Category is the user-selected category (e.g. "Electronics") — skip generic "other"
+      // ── Label resolution priority (all run through whitelist extractor) ──────
+      // 1. metadata.keyword  — set on records created after the last backend deploy
+      // 2. extractKeyword(itemTitle)        — covers older records with stored titles
+      // 3. extractKeyword(relatedItemTitle) — secondary title (claims/manual reviews)
+      // 4. extractKeyword(message)          — last-resort: internal message may hint
+      // 5. category (if not blank / "other")  — user-selected bucket
+      // 6. 'item'  — absolute fallback
       const rawKeyword  = act.metadata && act.metadata.keyword   ? act.metadata.keyword.toLowerCase()  : null;
       const rawCategory = act.metadata && act.metadata.category  ? act.metadata.category.toLowerCase() : null;
       const itemType    = act.metadata && act.metadata.itemType   ? act.metadata.itemType.toLowerCase() : null;
 
       const safeCategory = rawCategory && rawCategory !== 'other' ? rawCategory : null;
-      // Prefer the precise extracted keyword; fall back to category; final fallback "item"
-      const label = rawKeyword || safeCategory || 'item';
+
+      const label =
+        rawKeyword                          ||
+        extractKeyword(act.itemTitle)       ||
+        extractKeyword(act.relatedItemTitle)||
+        extractKeyword(act.message)         ||
+        safeCategory                        ||
+        'item';
 
       // Grammar helpers — plural keywords need different article/verb/pronoun
       const plural = isPlural(label);
@@ -114,12 +125,16 @@ const getCommunityInsights = async (req, res) => {
       } else if (act.type === 'claim_submitted') {
         // Singular: "A claim was submitted for a watch"
         // Plural:   "A claim was submitted for glasses"
-        const forPhrase = plural ? `for ${label}` : `for a ${label}`;
+        // Vowel-start singular: "A claim was submitted for an item"
+        const forArticle = plural ? '' : /^[aeiou]/.test(label) ? 'an ' : 'a ';
+        const forPhrase = plural ? `for ${label}` : `for ${forArticle}${label}`;
         safeMessage = `A claim was submitted ${forPhrase}`;
       } else if (act.type === 'manual_review_requested') {
         // Singular: "A manual review request was submitted for a watch"
         // Plural:   "A manual review request was submitted for glasses"
-        const forPhrase = plural ? `for ${label}` : `for a ${label}`;
+        // Vowel-start singular: "A manual review request was submitted for an item"
+        const forArticle = plural ? '' : /^[aeiou]/.test(label) ? 'an ' : 'a ';
+        const forPhrase = plural ? `for ${label}` : `for ${forArticle}${label}`;
         safeMessage = `A manual review request was submitted ${forPhrase}`;
       } else {
         safeMessage = 'Community activity recorded';
