@@ -4,6 +4,7 @@ const Item = require('../models/Item');
 const Claim = require('../models/Claim');
 const Activity = require('../models/Activity');
 const { matchOppositePendingSameCategory } = require('../utils/itemSimilarity');
+const { extractKeyword } = require('../utils/titleKeyword');
 
 // POST /api/admin/login
 const loginAdmin = async (req, res) => {
@@ -171,6 +172,10 @@ const approveClaim = async (req, res) => {
         message: `Items "${claim.itemId.title}" and "${claim.lostItemId.title}" marked as resolved.`,
         actorName: 'Admin',
         actorEmail: req.admin.email,
+        metadata: {
+          category: claim.itemId.category || null,
+          keyword: extractKeyword(claim.itemId.title)
+        }
       });
 
       if (otherClaims.modifiedCount > 0) {

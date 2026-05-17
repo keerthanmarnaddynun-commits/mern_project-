@@ -6,6 +6,7 @@ const {
   pickBestMatchingLostForFound,
   getEligibleUserLostFilter,
 } = require('../utils/itemSimilarity');
+const { extractKeyword } = require('../utils/titleKeyword');
 
 const NO_MATCHING_LOST_MSG = 'Report a matching lost item before claiming this item.';
 
@@ -78,7 +79,8 @@ const createClaim = async (req, res) => {
         userId: req.user._id,
         metadata: {
           category: item.category,
-          itemType: item.type
+          itemType: item.type,
+          keyword: extractKeyword(item.title)
         }
       });
     } catch (logErr) {
@@ -233,7 +235,8 @@ const createManualClaim = async (req, res) => {
         userId: req.user._id,
         metadata: {
           category: item.category,
-          itemType: item.type
+          itemType: item.type,
+          keyword: extractKeyword(item.title)
         }
       });
     } catch (logErr) {

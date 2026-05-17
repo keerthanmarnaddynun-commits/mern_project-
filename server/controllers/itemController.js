@@ -1,6 +1,7 @@
 const Item = require('../models/Item');
 const Activity = require('../models/Activity');
 const { matchOppositePendingSameCategory, confidenceRank } = require('../utils/itemSimilarity');
+const { extractKeyword } = require('../utils/titleKeyword');
 
 const getItems = async (req, res) => {
   try {
@@ -84,7 +85,8 @@ const createItem = async (req, res) => {
         userId: req.user._id,
         metadata: {
           category: newItem.category,
-          itemType: newItem.type
+          itemType: newItem.type,
+          keyword: extractKeyword(newItem.title)
         }
       });
     } catch (logErr) {

@@ -70,37 +70,33 @@ const getCommunityInsights = async (req, res) => {
     }).sort({ createdAt: -1 }).limit(10).lean();
 
     const recentActivity = rawActivities.map(act => {
-      const cat = act.metadata && act.metadata.category
-        ? act.metadata.category.toLowerCase()
-        : null;
-      const itemType = act.metadata && act.metadata.itemType
-        ? act.metadata.itemType.toLowerCase()
-        : null;
+      // Resolve the best available label: keyword > category > "item"
+      // Keyword is a whitelisted single noun extracted from the title (e.g. "watch", "laptop")
+      // Category is the user-selected category (e.g. "Electronics") — skip generic "other"
+      const rawKeyword  = act.metadata && act.metadata.keyword   ? act.metadata.keyword.toLowerCase()  : null;
+      const rawCategory = act.metadata && act.metadata.category  ? act.metadata.category.toLowerCase() : null;
+      const itemType    = act.metadata && act.metadata.itemType   ? act.metadata.itemType.toLowerCase() : null;
+
+      const safeCategory = rawCategory && rawCategory !== 'other' ? rawCategory : null;
+      // Prefer the precise extracted keyword; fall back to category; final fallback "item"
+      const label = rawKeyword || safeCategory || 'item';
 
       let safeMessage;
 
       if (act.type === 'item_reported') {
-        if (cat && itemType) {
-          safeMessage = `A ${itemType} ${cat} was reported`;
-        } else if (itemType) {
-          safeMessage = `A ${itemType} item was reported`;
+        if (itemType) {
+          safeMessage = `A ${itemType} ${label} was reported`;
         } else {
-          // Fallback: infer type from stored message text
+          // Infer lost/found from stored internal message (safe: just contains the word lost/found)
           const isLost = act.message && act.message.toLowerCase().includes('lost');
-          safeMessage = `A ${isLost ? 'lost' : 'found'} item was reported`;
+          safeMessage = `A ${isLost ? 'lost' : 'found'} ${label} was reported`;
         }
       } else if (act.type === 'item_resolved') {
-        safeMessage = cat
-          ? `A ${cat} was successfully returned to its owner`
-          : 'An item was successfully returned to its owner';
+        safeMessage = `A ${label} was successfully returned to its owner`;
       } else if (act.type === 'claim_submitted') {
-        safeMessage = cat
-          ? `A claim was submitted for a ${cat}`
-          : 'A potential match claim was submitted for review';
+        safeMessage = `A claim was submitted for a ${label}`;
       } else if (act.type === 'manual_review_requested') {
-        safeMessage = cat
-          ? `A manual review request was submitted for a ${cat}`
-          : 'A manual review request was submitted';
+        safeMessage = `A manual review request was submitted for a ${label}`;
       } else {
         safeMessage = 'Community activity recorded';
       }
