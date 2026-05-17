@@ -67,6 +67,7 @@ export default function ItemDetails() {
   const [manualReasonType, setManualReasonType] = useState('');
   const [manualReasonText, setManualReasonText] = useState('');
   const [manualError, setManualError] = useState('');
+  const [manualSuccess, setManualSuccess] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -293,6 +294,7 @@ export default function ItemDetails() {
 
   const handleOpenManualModal = async () => {
     setManualError('');
+    setManualSuccess(false);
     setManualLoading(true);
     setShowManualModal(true);
     try {
@@ -321,11 +323,10 @@ export default function ItemDetails() {
         reasonType: manualReasonType,
         reasonText: manualReasonType === 'other' ? manualReasonText : ''
       });
-      setShowManualModal(false);
       setClaimSubmitted(true);
       setClaimNoRetry(true);
       setClaimStatus(prev => prev ? { ...prev, hasClaimed: true, canClaim: false } : null);
-      alert('Manual review submitted successfully.');
+      setManualSuccess(true);
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
         setManualError(err.response?.data?.message || 'Could not submit manual claim.');
@@ -989,106 +990,126 @@ export default function ItemDetails() {
       {showManualModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-lg w-full shadow-xl my-8">
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Request Manual Review</h3>
-            <p className="text-sm text-gray-500 mb-6">
-              Submit this item for manual review by an administrator. Please select your matching lost item and explain why you believe it matches.
-            </p>
-
-            {manualError && (
-              <div className="mb-6 flex items-center gap-2 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                {manualError}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmitManualClaim} className="space-y-4 text-left">
-              <div>
-                <label className="block text-sm font-medium text-gray-900 mb-1">Which exact lost item are you linking this found item to?</label>
-                <p className="text-xs text-gray-500 mb-3">Choose the lost report that best matches this found item.</p>
-                {userPendingLostItems.length === 0 && !manualLoading ? (
-                  <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-xl border border-amber-100">
-                    You have no pending lost items. Please report a lost item first.
-                  </p>
-                ) : userPendingLostItems.length === 1 && !manualLoading ? (
-                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4 flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                      <Tag className="w-5 h-5 text-indigo-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-gray-900 leading-tight">{userPendingLostItems[0].title}</p>
-                      <p className="text-xs text-gray-600 mt-1">{userPendingLostItems[0].category} • {formatDate(userPendingLostItems[0].date_occurred)}</p>
-                    </div>
-                  </div>
-                ) : (
-                  <select
-                    required
-                    disabled={manualLoading}
-                    value={manualSelectedLost}
-                    onChange={(e) => setManualSelectedLost(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                  >
-                    <option value="" disabled>Select a lost report...</option>
-                    {userPendingLostItems.map(item => (
-                      <option key={item._id} value={item._id}>
-                        {item.title} ({item.category})
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Reason for manual review</label>
-                <select
-                  required
-                  disabled={manualLoading || userPendingLostItems.length === 0}
-                  value={manualReasonType}
-                  onChange={(e) => setManualReasonType(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                >
-                  <option value="" disabled>Select reason...</option>
-                  <option value="wrong_category">Wrong category selected</option>
-                  <option value="wording_difference">Different wording/title</option>
-                  <option value="location_mismatch">Location mismatch but details match</option>
-                  <option value="similar_appearance">Similar appearance/details</option>
-                  <option value="system_missed_match">System may have missed the match</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-
-              {manualReasonType === 'other' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Please specify</label>
-                  <textarea
-                    required
-                    disabled={manualLoading}
-                    rows={3}
-                    value={manualReasonText}
-                    onChange={(e) => setManualReasonText(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none"
-                    placeholder="Provide additional details..."
-                  />
+            {manualSuccess ? (
+              <div className="text-center py-6">
+                <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="w-8 h-8 text-emerald-600 animate-pulse" />
                 </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-6">
+                <h3 className="text-xl font-bold text-gray-900 mb-2">Request Submitted</h3>
+                <p className="text-sm text-gray-500 mb-6 px-4">
+                  Manual review submitted successfully.
+                </p>
                 <button
-                  type="button"
                   onClick={() => setShowManualModal(false)}
-                  disabled={manualLoading}
-                  className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-xl transition-colors"
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold shadow-sm transition-colors"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={manualLoading || userPendingLostItems.length === 0}
-                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-xl transition-colors"
-                >
-                  {manualLoading ? 'Submitting...' : 'Submit Request'}
+                  Close
                 </button>
               </div>
-            </form>
+            ) : (
+              <>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">Request Manual Review</h3>
+                <p className="text-sm text-gray-500 mb-6">
+                  Submit this item for manual review by an administrator. Please select your matching lost item and explain why you believe it matches.
+                </p>
+
+                {manualError && (
+                  <div className="mb-6 flex items-center gap-2 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    {manualError}
+                  </div>
+                )}
+
+                <form onSubmit={handleSubmitManualClaim} className="space-y-4 text-left">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-1">Which exact lost item are you linking this found item to?</label>
+                    <p className="text-xs text-gray-500 mb-3">Choose the lost report that best matches this found item.</p>
+                    {userPendingLostItems.length === 0 && !manualLoading ? (
+                      <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-xl border border-amber-100">
+                        You have no pending lost items. Please report a lost item first.
+                      </p>
+                    ) : userPendingLostItems.length === 1 && !manualLoading ? (
+                      <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4 flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                          <Tag className="w-5 h-5 text-indigo-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-gray-900 leading-tight">{userPendingLostItems[0].title}</p>
+                          <p className="text-xs text-gray-600 mt-1">{userPendingLostItems[0].category} • {formatDate(userPendingLostItems[0].date_occurred)}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <select
+                        required
+                        disabled={manualLoading}
+                        value={manualSelectedLost}
+                        onChange={(e) => setManualSelectedLost(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      >
+                        <option value="" disabled>Select a lost report...</option>
+                        {userPendingLostItems.map(item => (
+                          <option key={item._id} value={item._id}>
+                            {item.title} ({item.category})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason for manual review</label>
+                    <select
+                      required
+                      disabled={manualLoading || userPendingLostItems.length === 0}
+                      value={manualReasonType}
+                      onChange={(e) => setManualReasonType(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                    >
+                      <option value="" disabled>Select reason...</option>
+                      <option value="wrong_category">Wrong category selected</option>
+                      <option value="wording_difference">Different wording/title</option>
+                      <option value="location_mismatch">Location mismatch but details match</option>
+                      <option value="similar_appearance">Similar appearance/details</option>
+                      <option value="system_missed_match">System may have missed the match</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+
+                  {manualReasonType === 'other' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Please specify</label>
+                      <textarea
+                        required
+                        disabled={manualLoading}
+                        rows={3}
+                        value={manualReasonText}
+                        onChange={(e) => setManualReasonText(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none"
+                        placeholder="Provide additional details..."
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-6">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualModal(false)}
+                      disabled={manualLoading}
+                      className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-xl transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={manualLoading || userPendingLostItems.length === 0}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-xl transition-colors"
+                    >
+                      {manualLoading ? 'Submitting...' : 'Submit Request'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
           </div>
         </div>
       )}
