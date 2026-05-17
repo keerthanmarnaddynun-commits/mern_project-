@@ -81,7 +81,11 @@ const createItem = async (req, res) => {
         actorEmail: req.user.email,
         itemTitle: newItem.title,
         itemId: newItem._id,
-        userId: req.user._id
+        userId: req.user._id,
+        metadata: {
+          category: newItem.category,
+          itemType: newItem.type
+        }
       });
     } catch (logErr) {
       console.error('Activity log error:', logErr);

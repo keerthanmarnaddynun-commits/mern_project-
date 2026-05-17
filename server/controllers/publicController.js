@@ -64,22 +64,45 @@ const getCommunityInsights = async (req, res) => {
     }
 
     // 5. Recent Community Activity Feed
-    // We only fetch a few generic public activities to maintain privacy
+    // Only expose category-level context — no usernames, emails, titles, or locations
     const rawActivities = await Activity.find({
-      type: { $in: ['item_reported', 'claim_submitted', 'item_resolved'] }
+      type: { $in: ['item_reported', 'claim_submitted', 'item_resolved', 'manual_review_requested'] }
     }).sort({ createdAt: -1 }).limit(10).lean();
 
     const recentActivity = rawActivities.map(act => {
-      let safeMessage = "Activity recorded";
-      
+      const cat = act.metadata && act.metadata.category
+        ? act.metadata.category.toLowerCase()
+        : null;
+      const itemType = act.metadata && act.metadata.itemType
+        ? act.metadata.itemType.toLowerCase()
+        : null;
+
+      let safeMessage;
+
       if (act.type === 'item_reported') {
-        const isLost = act.message && act.message.toLowerCase().includes('lost');
-        const typeStr = isLost ? 'lost' : 'found';
-        safeMessage = `A ${typeStr} item was reported`;
+        if (cat && itemType) {
+          safeMessage = `A ${itemType} ${cat} was reported`;
+        } else if (itemType) {
+          safeMessage = `A ${itemType} item was reported`;
+        } else {
+          // Fallback: infer type from stored message text
+          const isLost = act.message && act.message.toLowerCase().includes('lost');
+          safeMessage = `A ${isLost ? 'lost' : 'found'} item was reported`;
+        }
       } else if (act.type === 'item_resolved') {
-        safeMessage = "An item was successfully returned to its owner";
+        safeMessage = cat
+          ? `A ${cat} was successfully returned to its owner`
+          : 'An item was successfully returned to its owner';
       } else if (act.type === 'claim_submitted') {
-        safeMessage = "A potential match claim was submitted for review";
+        safeMessage = cat
+          ? `A claim was submitted for a ${cat}`
+          : 'A potential match claim was submitted for review';
+      } else if (act.type === 'manual_review_requested') {
+        safeMessage = cat
+          ? `A manual review request was submitted for a ${cat}`
+          : 'A manual review request was submitted';
+      } else {
+        safeMessage = 'Community activity recorded';
       }
 
       return {

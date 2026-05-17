@@ -75,7 +75,11 @@ const createClaim = async (req, res) => {
         relatedItemTitle: best.lost.title,
         claimId: claim._id,
         itemId: item._id,
-        userId: req.user._id
+        userId: req.user._id,
+        metadata: {
+          category: item.category,
+          itemType: item.type
+        }
       });
     } catch (logErr) {
       console.error('Activity log error:', logErr);
@@ -226,7 +230,11 @@ const createManualClaim = async (req, res) => {
         relatedItemTitle: lostItem.title,
         claimId: claim._id,
         itemId: item._id,
-        userId: req.user._id
+        userId: req.user._id,
+        metadata: {
+          category: item.category,
+          itemType: item.type
+        }
       });
     } catch (logErr) {
       console.error('Activity log error:', logErr);
