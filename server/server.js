@@ -30,13 +30,16 @@ app.use(express.json());
 
 const allowedOrigins = [
   'http://localhost:5173',
-  'http://localhost:5174',
-  'https://mern-project-2ksjhq4em-keerthanmarnaddynun-5922s-projects.vercel.app'
+  'http://localhost:5174'
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      origin.endsWith('.vercel.app')
+    ) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -65,7 +68,7 @@ app.get('/', (req, res) => {
   res.send('API Running');
 });
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
