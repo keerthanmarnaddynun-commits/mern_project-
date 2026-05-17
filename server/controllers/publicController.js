@@ -1,6 +1,7 @@
 const Item = require('../models/Item');
 const Claim = require('../models/Claim');
 const Activity = require('../models/Activity');
+const { isPlural } = require('../utils/titleKeyword');
 
 const getCommunityInsights = async (req, res) => {
   try {
@@ -81,22 +82,45 @@ const getCommunityInsights = async (req, res) => {
       // Prefer the precise extracted keyword; fall back to category; final fallback "item"
       const label = rawKeyword || safeCategory || 'item';
 
+      // Grammar helpers — plural keywords need different article/verb/pronoun
+      const plural = isPlural(label);
+      const article   = plural ? ''        : 'A ';   // "Glasses" vs "A watch"
+      const wasWere   = plural ? 'were'    : 'was';
+      const itsTheir  = plural ? 'their'   : 'its';
+      // Capitalise label when used as sentence subject (plural, no leading article)
+      const subject   = plural ? label.charAt(0).toUpperCase() + label.slice(1) : label;
+
       let safeMessage;
 
       if (act.type === 'item_reported') {
         if (itemType) {
-          safeMessage = `A ${itemType} ${label} was reported`;
+          // Singular: "A lost watch was reported"
+          // Plural:   "Lost glasses were reported"
+          safeMessage = plural
+            ? `${itemType.charAt(0).toUpperCase() + itemType.slice(1)} ${subject} ${wasWere} reported`
+            : `${article}${itemType} ${label} ${wasWere} reported`;
         } else {
           // Infer lost/found from stored internal message (safe: just contains the word lost/found)
           const isLost = act.message && act.message.toLowerCase().includes('lost');
-          safeMessage = `A ${isLost ? 'lost' : 'found'} ${label} was reported`;
+          const typeWord = isLost ? 'lost' : 'found';
+          safeMessage = plural
+            ? `${typeWord.charAt(0).toUpperCase() + typeWord.slice(1)} ${subject} ${wasWere} reported`
+            : `${article}${typeWord} ${label} ${wasWere} reported`;
         }
       } else if (act.type === 'item_resolved') {
-        safeMessage = `A ${label} was successfully returned to its owner`;
+        // Singular: "A watch was successfully returned to its owner"
+        // Plural:   "Glasses were successfully returned to their owner"
+        safeMessage = `${article}${subject} ${wasWere} successfully returned to ${itsTheir} owner`;
       } else if (act.type === 'claim_submitted') {
-        safeMessage = `A claim was submitted for a ${label}`;
+        // Singular: "A claim was submitted for a watch"
+        // Plural:   "A claim was submitted for glasses"
+        const forPhrase = plural ? `for ${label}` : `for a ${label}`;
+        safeMessage = `A claim was submitted ${forPhrase}`;
       } else if (act.type === 'manual_review_requested') {
-        safeMessage = `A manual review request was submitted for a ${label}`;
+        // Singular: "A manual review request was submitted for a watch"
+        // Plural:   "A manual review request was submitted for glasses"
+        const forPhrase = plural ? `for ${label}` : `for a ${label}`;
+        safeMessage = `A manual review request was submitted ${forPhrase}`;
       } else {
         safeMessage = 'Community activity recorded';
       }

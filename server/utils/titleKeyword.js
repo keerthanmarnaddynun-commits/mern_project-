@@ -2,7 +2,8 @@
  * titleKeyword.js
  *
  * Extracts a single privacy-safe object noun from an item title for use in
- * public community activity feed messages.
+ * public community activity feed messages, and detects whether that noun is
+ * grammatically plural so message templates can adjust verb/pronoun accordingly.
  *
  * Strategy:
  *   1. Tokenise and lowercase the title.
@@ -58,6 +59,18 @@ const SAFE_OBJECT_NOUNS = new Set([
 ]);
 
 /**
+ * Words in the whitelist that are grammatically plural and need
+ * "were" / "their" instead of "was" / "its" in message templates.
+ */
+const PLURAL_NOUNS = new Set([
+  'glasses', 'spectacles', 'sunglasses',
+  'keys',
+  'earphones', 'earbuds', 'headphones', 'airpods',
+  'shoes', 'sandals', 'sneakers', 'heels', 'slippers',
+  'gloves',
+]);
+
+/**
  * Returns a safe lowercase object noun extracted from the title,
  * or null if no recognised noun is found.
  *
@@ -82,4 +95,15 @@ function extractKeyword(title) {
   return null;
 }
 
-module.exports = { extractKeyword };
+/**
+ * Returns true if the given keyword is grammatically plural
+ * (e.g. "glasses", "keys", "earphones").
+ *
+ * @param {string|null} keyword
+ * @returns {boolean}
+ */
+function isPlural(keyword) {
+  return keyword != null && PLURAL_NOUNS.has(keyword.toLowerCase());
+}
+
+module.exports = { extractKeyword, isPlural };
