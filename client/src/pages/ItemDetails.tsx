@@ -22,6 +22,7 @@ import {
 import Navbar from '../components/Navbar';
 import { fetchItemById, deleteItem, getSimilarItems, createClaim, getClaimStatus, updateItem, getMyReports, createManualClaim } from '../services/api';
 import type { ClaimStatusResponse, Item, SimilarItemMatch } from '../types';
+import { CATEGORIES } from '../types';
 import { useAuth } from '../context/AuthContext';
 
 export default function ItemDetails() {
@@ -900,13 +901,9 @@ export default function ItemDetails() {
                     onChange={(e) => setEditData({ ...editData, category: e.target.value })}
                     className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
                   >
-                    <option value="">Select category...</option>
-                    <option value="Electronics">Electronics</option>
-                    <option value="Wallet/Keys">Wallet/Keys</option>
-                    <option value="Bags/Luggage">Bags/Luggage</option>
-                    <option value="Clothing">Clothing</option>
-                    <option value="Documents">Documents</option>
-                    <option value="Other">Other</option>
+                    {CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
                   </select>
                 </div>
                 
