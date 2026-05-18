@@ -20,7 +20,7 @@ export default function Navbar() {
               <Search className="w-5 h-5 text-white" />
             </div>
             <span className="text-xl font-bold text-gray-900">
-              Found<span className="text-blue-600">It</span>
+              Lost and <span className="text-blue-600">Found</span>
             </span>
           </Link>
 

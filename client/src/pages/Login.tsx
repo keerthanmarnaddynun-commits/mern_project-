@@ -44,7 +44,7 @@ export default function Login() {
               <Search className="w-6 h-6 text-white" />
             </div>
             <span className="text-2xl font-bold text-gray-900">
-              Found<span className="text-blue-600">It</span>
+              Lost and <span className="text-blue-600">Found</span>
             </span>
           </Link>
           <h1 className="text-2xl font-bold text-gray-900 mb-1">Welcome back</h1>
