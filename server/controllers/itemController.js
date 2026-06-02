@@ -3,6 +3,12 @@ const Activity = require('../models/Activity');
 const { matchOppositePendingSameCategory, confidenceRank } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 
+function normalizeText(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 const getItems = async (req, res) => {
   try {
     const { status } = req.query;
@@ -48,14 +54,35 @@ const getItemById = async (req, res) => {
 
 const createItem = async (req, res) => {
   try {
-    const { title, description, category, type, location, date_occurred, image_url, contact_email, contact_phone } =
-      req.body;
+    const {
+      title,
+      description,
+      category,
+      type,
+      location,
+      date_occurred,
+      image_url,
+      contact_email,
+      contact_phone,
+      custodyLocation,
+      custodyDepartment,
+      receiverName,
+      receiverRole,
+      handoverNotes,
+    } = req.body;
 
     if (!title || !description || !category || !type || !location || !date_occurred || !contact_email) {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
     const postedBy = req.user._id;
+    const normalizedCustodyLocation = normalizeText(custodyLocation);
+    const normalizedCustodyDepartment = normalizeText(custodyDepartment);
+    const normalizedReceiverName = normalizeText(receiverName);
+    const normalizedReceiverRole = normalizeText(receiverRole);
+    const normalizedHandoverNotes = normalizeText(handoverNotes);
+    const shouldMarkDepartmentReceived =
+      type === 'found' && (normalizedCustodyLocation || normalizedCustodyDepartment);
 
     const newItem = new Item({
       title,
@@ -70,6 +97,13 @@ const createItem = async (req, res) => {
       postedBy,
       status: 'pending', // Initialize with pending status
       is_resolved: false,
+      custodyStatus: shouldMarkDepartmentReceived ? 'department_received' : 'not_handed_over',
+      custodyLocation: type === 'found' ? normalizedCustodyLocation : null,
+      custodyDepartment: type === 'found' ? normalizedCustodyDepartment : null,
+      receiverName: type === 'found' ? normalizedReceiverName : null,
+      receiverRole: type === 'found' ? normalizedReceiverRole : null,
+      handoverNotes: type === 'found' ? normalizedHandoverNotes : null,
+      handoverDate: shouldMarkDepartmentReceived ? new Date() : null,
     });
 
     await newItem.save();
@@ -86,7 +120,14 @@ const createItem = async (req, res) => {
         metadata: {
           category: newItem.category,
           itemType: newItem.type,
-          keyword: extractKeyword(newItem.title)
+          keyword: extractKeyword(newItem.title),
+          ...(newItem.type === 'found' && (newItem.custodyLocation || newItem.custodyDepartment)
+            ? {
+                custodyStatus: newItem.custodyStatus,
+                custodyDepartment: newItem.custodyDepartment,
+                custodyLocation: newItem.custodyLocation,
+              }
+            : {}),
         }
       });
     } catch (logErr) {
@@ -103,7 +144,21 @@ const createItem = async (req, res) => {
 const updateItem = async (req, res) => {
   try {
     const { id } = req.params;
-    const allowedUpdates = ['title', 'description', 'category', 'location', 'date_occurred', 'image_url', 'contact_email', 'contact_phone'];
+    const allowedUpdates = [
+      'title',
+      'description',
+      'category',
+      'location',
+      'date_occurred',
+      'image_url',
+      'contact_email',
+      'contact_phone',
+      'custodyLocation',
+      'custodyDepartment',
+      'receiverName',
+      'receiverRole',
+      'handoverNotes',
+    ];
 
     const item = await Item.findById(id);
     if (!item) {
@@ -117,10 +172,35 @@ const updateItem = async (req, res) => {
     let isModified = false;
     allowedUpdates.forEach((field) => {
       if (req.body[field] !== undefined) {
-        item[field] = req.body[field];
-        isModified = true;
+        if (
+          item.type === 'found' ||
+          !['custodyLocation', 'custodyDepartment', 'receiverName', 'receiverRole', 'handoverNotes'].includes(field)
+        ) {
+          if (['custodyLocation', 'custodyDepartment', 'receiverName', 'receiverRole', 'handoverNotes'].includes(field)) {
+            item[field] = normalizeText(req.body[field]);
+          } else {
+            item[field] = req.body[field];
+          }
+          isModified = true;
+        }
       }
     });
+
+    if (item.type === 'found') {
+      const hasCustodyInfo = !!(item.custodyLocation || item.custodyDepartment);
+      if (hasCustodyInfo) {
+        item.custodyStatus = item.status === 'resolved' || item.is_resolved ? 'returned' : 'department_received';
+        if (!item.handoverDate) {
+          item.handoverDate = new Date();
+        }
+      } else if (item.status === 'resolved' || item.is_resolved) {
+        item.custodyStatus = 'returned';
+      } else {
+        item.custodyStatus = 'not_handed_over';
+        item.handoverDate = null;
+      }
+      isModified = true;
+    }
 
     if (isModified) {
       await item.save();

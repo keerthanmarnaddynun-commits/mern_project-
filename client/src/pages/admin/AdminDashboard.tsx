@@ -499,6 +499,27 @@ const ClaimsTab = () => {
                   <div className="space-y-3 text-sm">
                     <p><span className="font-semibold text-gray-600">Category:</span> {claim.foundItem?.category || 'N/A'}</p>
                     <p><span className="font-semibold text-gray-600">Location:</span> {claim.foundItem?.location || 'N/A'}</p>
+                    <p>
+                      <span className="font-semibold text-gray-600">Custody:</span>{' '}
+                      <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
+                        claim.foundItem?.custodyStatus === 'returned'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : claim.foundItem?.custodyStatus === 'department_received'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {(claim.foundItem?.custodyStatus || 'not_handed_over').replace(/_/g, ' ')}
+                      </span>
+                    </p>
+                    {(claim.foundItem?.custodyLocation || claim.foundItem?.custodyDepartment) && (
+                      <p><span className="font-semibold text-gray-600">Held at:</span> {claim.foundItem?.custodyLocation || claim.foundItem?.custodyDepartment}</p>
+                    )}
+                    {claim.foundItem?.receiverName && (
+                      <p><span className="font-semibold text-gray-600">Receiver:</span> {claim.foundItem.receiverName}</p>
+                    )}
+                    {claim.foundItem?.handoverDate && (
+                      <p><span className="font-semibold text-gray-600">Handover date:</span> {new Date(claim.foundItem.handoverDate).toLocaleString()}</p>
+                    )}
                     <p><span className="font-semibold text-gray-600">Date:</span> {claim.foundItem?.date_occurred ? new Date(claim.foundItem.date_occurred).toLocaleDateString() : 'Unknown Date'}</p>
                     <p><span className="font-semibold text-gray-600">Description:</span> {claim.foundItem?.description || 'N/A'}</p>
                     <div className="mt-4 pt-4 border-t border-gray-100">
@@ -620,6 +641,7 @@ const ItemsTab = () => {
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type/Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Custody</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reporter</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
             </tr>
@@ -638,6 +660,28 @@ const ItemsTab = () => {
                   <span className={`ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${item.status === 'resolved' ? 'bg-gray-100 text-gray-800' : 'bg-yellow-100 text-yellow-800'}`}>
                     {item.status.toUpperCase()}
                   </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {item.type === 'found' ? (
+                    <div>
+                      <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
+                        item.custodyStatus === 'returned'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : item.custodyStatus === 'department_received'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {(item.custodyStatus || 'not_handed_over').replace(/_/g, ' ')}
+                      </span>
+                      {(item.custodyLocation || item.custodyDepartment) && (
+                        <div className="text-xs mt-1">{item.custodyLocation || item.custodyDepartment}</div>
+                      )}
+                      {item.receiverName && <div className="text-xs mt-1">Receiver: {item.receiverName}</div>}
+                      {item.handoverDate && <div className="text-xs mt-1">{new Date(item.handoverDate).toLocaleString()}</div>}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-400">N/A</span>
+                  )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   <div>{item.postedBy?.name || 'Unknown'}</div>

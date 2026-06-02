@@ -46,6 +46,11 @@ interface CreateItemPayload {
   image_url?: string | null;
   contact_email: string;
   contact_phone?: string | null;
+  custodyLocation?: string | null;
+  custodyDepartment?: string | null;
+  receiverName?: string | null;
+  receiverRole?: string | null;
+  handoverNotes?: string | null;
 }
 
 export async function createItem(item: CreateItemPayload): Promise<Item> {

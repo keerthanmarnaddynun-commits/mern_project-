@@ -1,5 +1,6 @@
 export type ItemType = 'lost' | 'found';
 export type ItemStatus = 'pending' | 'resolved';
+export type CustodyStatus = 'not_handed_over' | 'department_received' | 'returned';
 
 export interface Item {
   _id: string;
@@ -15,6 +16,13 @@ export interface Item {
   postedBy: string;
   status: ItemStatus;
   is_resolved?: boolean;
+  custodyStatus?: CustodyStatus;
+  custodyLocation?: string | null;
+  custodyDepartment?: string | null;
+  receiverName?: string | null;
+  receiverRole?: string | null;
+  handoverNotes?: string | null;
+  handoverDate?: string | null;
   createdAt: string;
 }
 

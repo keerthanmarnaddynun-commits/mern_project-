@@ -24,6 +24,7 @@ import { fetchItemById, deleteItem, getSimilarItems, createClaim, getClaimStatus
 import type { ClaimStatusResponse, Item, SimilarItemMatch } from '../types';
 import { CATEGORIES } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { CUSTODY_LOCATIONS } from '../constants/custodyLocations';
 
 export default function ItemDetails() {
   const { id } = useParams<{ id: string }>();
@@ -58,6 +59,11 @@ export default function ItemDetails() {
     image_url: '',
     contact_email: '',
     contact_phone: '',
+    custodyLocation: '',
+    custodyDepartment: '',
+    receiverName: '',
+    receiverRole: '',
+    handoverNotes: '',
   });
 
   // Manual Review State
@@ -183,6 +189,11 @@ export default function ItemDetails() {
       image_url: item.image_url || '',
       contact_email: item.contact_email,
       contact_phone: item.contact_phone || '',
+      custodyLocation: item.custodyLocation || '',
+      custodyDepartment: item.custodyDepartment || '',
+      receiverName: item.receiverName || '',
+      receiverRole: item.receiverRole || '',
+      handoverNotes: item.handoverNotes || '',
     });
     setEditError('');
     setEditSuccess(false);
@@ -199,6 +210,11 @@ export default function ItemDetails() {
         ...editData,
         image_url: editData.image_url || null,
         contact_phone: editData.contact_phone || null,
+        custodyLocation: item.type === 'found' ? editData.custodyLocation || null : null,
+        custodyDepartment: item.type === 'found' ? editData.custodyDepartment || null : null,
+        receiverName: item.type === 'found' ? editData.receiverName || null : null,
+        receiverRole: item.type === 'found' ? editData.receiverRole || null : null,
+        handoverNotes: item.type === 'found' ? editData.handoverNotes || null : null,
       });
       setItem(updated);
       setEditSuccess(true);
@@ -522,6 +538,60 @@ export default function ItemDetails() {
               </div>
             </div>
 
+            {!isLost && (
+              <div className="border-t border-gray-100 pt-6 mb-6">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">Item Custody Details</h3>
+                {item.custodyStatus === 'department_received' ? (
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 space-y-2">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                      Department Received
+                    </span>
+                    <p className="text-sm text-gray-800">
+                      <span className="font-semibold">Currently held at:</span>{' '}
+                      {item.custodyLocation || item.custodyDepartment || 'Department desk'}
+                      {item.custodyDepartment && item.custodyLocation ? ` (${item.custodyDepartment})` : ''}
+                    </p>
+                    {item.receiverName && (
+                      <p className="text-sm text-gray-700">
+                        <span className="font-semibold">Received by:</span> {item.receiverName}
+                      </p>
+                    )}
+                    {item.receiverRole && (
+                      <p className="text-sm text-gray-700">
+                        <span className="font-semibold">Role:</span> {item.receiverRole}
+                      </p>
+                    )}
+                    {item.handoverNotes && (
+                      <p className="text-sm text-gray-700">
+                        <span className="font-semibold">Handover notes:</span> {item.handoverNotes}
+                      </p>
+                    )}
+                    {item.handoverDate && (
+                      <p className="text-xs text-gray-500">
+                        Handover date: {new Date(item.handoverDate).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                ) : item.custodyStatus === 'returned' ? (
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 mb-2">
+                      Returned
+                    </span>
+                    <p className="text-sm text-emerald-900">This item has been returned to its owner.</p>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200 mb-2">
+                      Not Handed Over
+                    </span>
+                    <p className="text-sm text-gray-700">
+                      This found item has not been marked as handed over to a department yet.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {isLost ? (
               <div className="border-t border-gray-100 pt-6">
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Reporter contact</p>
@@ -552,6 +622,12 @@ export default function ItemDetails() {
                     <p className="text-xs text-gray-500 mt-1.5 mb-4 max-w-lg leading-relaxed">
                       You can claim this item if you have reported a matching lost item.
                     </p>
+                    {item.custodyStatus === 'department_received' && (
+                      <p className="text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-4 max-w-lg">
+                        If your claim is approved, you may collect this item from the listed department/location after
+                        verification.
+                      </p>
+                    )}
 
                     {claimStatusLoading && (
                       <p className="text-xs text-gray-400 mb-4 flex items-center gap-2">
@@ -962,6 +1038,68 @@ export default function ItemDetails() {
                   />
                 </div>
               </div>
+
+              {item.type === 'found' && (
+                <div className="border-t border-gray-100 pt-5 mt-2">
+                  <h4 className="text-sm font-semibold text-blue-900 mb-1.5">Item Handover Details</h4>
+                  <p className="text-xs text-blue-700/80 mb-4">
+                    Update where this found item is currently kept so claimants know where to collect it.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Custody Location / Department</label>
+                      <select
+                        value={editData.custodyLocation}
+                        onChange={(e) => setEditData({ ...editData, custodyLocation: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      >
+                        <option value="">Select location (optional)</option>
+                        {CUSTODY_LOCATIONS.map((loc) => (
+                          <option key={loc} value={loc}>
+                            {loc}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+                      <input
+                        type="text"
+                        value={editData.custodyDepartment}
+                        onChange={(e) => setEditData({ ...editData, custodyDepartment: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Receiver Name</label>
+                      <input
+                        type="text"
+                        value={editData.receiverName}
+                        onChange={(e) => setEditData({ ...editData, receiverName: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Receiver Role / Designation</label>
+                      <input
+                        type="text"
+                        value={editData.receiverRole}
+                        onChange={(e) => setEditData({ ...editData, receiverRole: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Handover Notes</label>
+                      <textarea
+                        rows={3}
+                        value={editData.handoverNotes}
+                        onChange={(e) => setEditData({ ...editData, handoverNotes: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-6">
                 <button

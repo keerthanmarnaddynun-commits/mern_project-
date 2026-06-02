@@ -17,6 +17,7 @@ import Navbar from '../components/Navbar';
 import { createItem, fetchItems } from '../services/api';
 import { CATEGORIES, type Item } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { CUSTODY_LOCATIONS } from '../constants/custodyLocations';
 
 export default function PostItem() {
   const navigate = useNavigate();
@@ -33,6 +34,11 @@ export default function PostItem() {
     image_url: '',
     contact_email: user?.email ?? '',
     contact_phone: '',
+    custodyLocation: '',
+    custodyDepartment: '',
+    receiverName: '',
+    receiverRole: '',
+    handoverNotes: '',
   });
 
   useEffect(() => {
@@ -81,6 +87,11 @@ export default function PostItem() {
         image_url: form.image_url || null,
         contact_email: form.contact_email,
         contact_phone: form.contact_phone || null,
+        custodyLocation: form.type === 'found' ? form.custodyLocation || null : null,
+        custodyDepartment: form.type === 'found' ? form.custodyDepartment || null : null,
+        receiverName: form.type === 'found' ? form.receiverName || null : null,
+        receiverRole: form.type === 'found' ? form.receiverRole || null : null,
+        handoverNotes: form.type === 'found' ? form.handoverNotes || null : null,
       };
 
       await createItem(payload);
@@ -344,6 +355,82 @@ export default function PostItem() {
             </div>
 
             <div className="border-t border-gray-100 pt-6">
+              {form.type === 'found' && (
+                <div className="mb-6 p-4 bg-blue-50/60 border border-blue-100 rounded-xl">
+                  <h3 className="text-sm font-semibold text-blue-900 mb-1.5">Item Handover Details</h3>
+                  <p className="text-xs text-blue-800/80 mb-4">
+                    If you handed this item to a department, lab, office, or staff member, add the details here so the
+                    owner knows where to collect it.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1.5">Custody Location / Department</label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <select
+                          name="custodyLocation"
+                          value={form.custodyLocation}
+                          onChange={handleChange}
+                          className="w-full pl-10 pr-8 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                        >
+                          <option value="">Select location (optional)</option>
+                          {CUSTODY_LOCATIONS.map((loc) => (
+                            <option key={loc} value={loc}>
+                              {loc}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1.5">Department (optional)</label>
+                      <input
+                        type="text"
+                        name="custodyDepartment"
+                        value={form.custodyDepartment}
+                        onChange={handleChange}
+                        placeholder="e.g. CSE Department Office"
+                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1.5">Receiver Name</label>
+                      <input
+                        type="text"
+                        name="receiverName"
+                        value={form.receiverName}
+                        onChange={handleChange}
+                        placeholder="e.g. Dr. Kumar"
+                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1.5">Receiver Role / Designation</label>
+                      <input
+                        type="text"
+                        name="receiverRole"
+                        value={form.receiverRole}
+                        onChange={handleChange}
+                        placeholder="e.g. Faculty / Lab Assistant"
+                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm text-gray-600 mb-1.5">Handover Notes</label>
+                      <textarea
+                        name="handoverNotes"
+                        value={form.handoverNotes}
+                        onChange={handleChange}
+                        rows={3}
+                        placeholder="e.g. Submitted at 2:30 PM"
+                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <p className="text-sm font-medium text-gray-700 mb-4">Contact information</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>

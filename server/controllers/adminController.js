@@ -145,7 +145,11 @@ const approveClaim = async (req, res) => {
     await claim.save();
 
     // Mark items as resolved
-    await Item.findByIdAndUpdate(claim.itemId._id, { status: 'resolved', is_resolved: true });
+    await Item.findByIdAndUpdate(claim.itemId._id, {
+      status: 'resolved',
+      is_resolved: true,
+      custodyStatus: 'returned',
+    });
     await Item.findByIdAndUpdate(claim.lostItemId._id, { status: 'resolved', is_resolved: true });
 
     // Auto-reject other claims for the same found item

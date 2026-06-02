@@ -53,6 +53,35 @@ const itemSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    custodyStatus: {
+      type: String,
+      enum: ['not_handed_over', 'department_received', 'returned'],
+      default: 'not_handed_over',
+    },
+    custodyLocation: {
+      type: String,
+      default: null,
+    },
+    custodyDepartment: {
+      type: String,
+      default: null,
+    },
+    receiverName: {
+      type: String,
+      default: null,
+    },
+    receiverRole: {
+      type: String,
+      default: null,
+    },
+    handoverNotes: {
+      type: String,
+      default: null,
+    },
+    handoverDate: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

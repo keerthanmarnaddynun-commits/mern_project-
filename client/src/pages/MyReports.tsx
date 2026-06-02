@@ -284,6 +284,19 @@ export default function MyReports() {
                           <MapPin className="w-3.5 h-3.5 text-gray-400" />
                           <span className="truncate">{item.location}</span>
                         </div>
+                        {item.type === 'found' && (
+                          <div className="flex items-center gap-2 text-xs text-gray-600">
+                            <CheckCircle className="w-3.5 h-3.5 text-gray-400" />
+                            <span className="truncate">
+                              Custody:{' '}
+                              {item.custodyStatus === 'department_received'
+                                ? item.custodyLocation || item.custodyDepartment || 'Department received'
+                                : item.custodyStatus === 'returned'
+                                  ? 'Returned to owner'
+                                  : 'Not handed over'}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-2 mt-3">
                           <span className="text-[10px] font-medium text-gray-400">
                             {new Date(item.createdAt).toLocaleDateString()}
