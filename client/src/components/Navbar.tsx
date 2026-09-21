@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Search, MapPin, PlusCircle, Menu, X, User, Activity, TrendingUp } from 'lucide-react';
+import { Search, MapPin, PlusCircle, Menu, X, User, Activity, TrendingUp, Building2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import NotificationCenter from './NotificationCenter';
 
@@ -68,6 +68,19 @@ export default function Navbar() {
               <PlusCircle className="w-4 h-4" />
               Report Item
             </Link>
+            {user?.role === 'faculty' && (
+              <Link
+                to="/faculty-dashboard"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  isActive('/faculty-dashboard')
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <Building2 className="w-4 h-4" />
+                Faculty Dashboard
+              </Link>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -150,6 +163,16 @@ export default function Navbar() {
             <PlusCircle className="w-4 h-4" />
             Report Item
           </Link>
+          {user?.role === 'faculty' && (
+            <Link
+              to="/faculty-dashboard"
+              onClick={() => setMenuOpen(false)}
+              className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Building2 className="w-4 h-4" />
+              Faculty Dashboard
+            </Link>
+          )}
           {user ? (
             <Link
               to="/profile"

@@ -24,6 +24,8 @@ function toPublicUser(userDoc) {
     _id: userDoc._id,
     name: userDoc.name,
     email: userDoc.email,
+    role: userDoc.role || 'user',
+    department: userDoc.department || null,
   };
 }
 

@@ -20,6 +20,15 @@ const userSchema = new mongoose.Schema(
       minlength: 6,
       select: false,
     },
+    role: {
+      type: String,
+      enum: ['user', 'faculty'],
+      default: 'user',
+    },
+    department: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );

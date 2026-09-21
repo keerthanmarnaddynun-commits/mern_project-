@@ -29,6 +29,18 @@ const protect = async (req, res, next) => {
     return res.status(401).json({ message: 'Not authorized, token invalid' });
   }
 
+  // Support admin token
+  if (decoded.role === 'admin') {
+    req.admin = { email: decoded.email, role: 'admin' };
+    req.user = {
+      _id: '000000000000000000000000',
+      name: 'System Admin',
+      email: decoded.email,
+      role: 'admin',
+    };
+    return next();
+  }
+
   const userId = decoded.userId;
   if (!userId) {
     return res.status(401).json({ message: 'Not authorized, token invalid' });
@@ -48,4 +60,17 @@ const protect = async (req, res, next) => {
   }
 };
 
-module.exports = { protect };
+/**
+ * Authorize specific roles (e.g. 'admin', 'faculty').
+ */
+const authorize = (...roles) => {
+  return (req, res, next) => {
+    const userRole = req.user?.role || req.admin?.role;
+    if (!userRole || !roles.includes(userRole)) {
+      return res.status(403).json({ message: 'Access denied: insufficient permissions' });
+    }
+    next();
+  };
+};
+
+module.exports = { protect, authorize };

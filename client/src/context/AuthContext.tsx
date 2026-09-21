@@ -2,12 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import axios from 'axios';
 import API from '../services/api';
-
-interface User {
-  _id: string;
-  name: string;
-  email: string;
-}
+import type { User } from '../types';
 
 interface AuthContextType {
   user: User | null;
@@ -47,8 +42,10 @@ function normalizeUser(nextUser: unknown): User | null {
   const _id = o._id != null ? String(o._id) : '';
   const name = o.name != null ? String(o.name) : '';
   const email = o.email != null ? String(o.email) : '';
+  const role = o.role === 'faculty' ? 'faculty' : (o.role === 'user' ? 'user' : undefined);
+  const department = typeof o.department === 'string' ? o.department : undefined;
   if (!_id || !email) return null;
-  return { _id, name, email };
+  return { _id, name, email, role, department };
 }
 
 function toAuthError(error: unknown, fallback: string): Error {

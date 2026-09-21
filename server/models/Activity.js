@@ -14,6 +14,13 @@ const activitySchema = new mongoose.Schema(
         'claim_auto_rejected',
         'item_resolved',
         'account_deleted',
+        'dispute_raised',
+        'fraud_alert',
+        'dispute_closed',
+        'dispute_resolved',
+        'item_verified',
+        'handover_denied',
+        'item_recovered',
       ],
     },
     message: {

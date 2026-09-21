@@ -18,9 +18,10 @@ import {
   Edit2,
   Info,
   PlusCircle,
+  X,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
-import { fetchItemById, deleteItem, getSimilarItems, createClaim, getClaimStatus, updateItem, getMyReports, createManualClaim } from '../services/api';
+import { fetchItemById, deleteItem, getSimilarItems, createClaim, getClaimStatus, updateItem, getMyReports, createManualClaim, disputeItemHandover, resubmitClaim, submitDispute } from '../services/api';
 import type { ClaimStatusResponse, Item, SimilarItemMatch } from '../types';
 import { CATEGORIES } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -31,8 +32,11 @@ export default function ItemDetails() {
   const navigate = useNavigate();
   const location = useLocation();
   const previousMatchId = location.state?.previousMatchId;
+  const isFromFaculty = location.state?.fromFaculty;
+  const lostItemId = location.state?.lostItemId;
   const { user } = useAuth();
   const [item, setItem] = useState<Item | null>(null);
+  const [lostItem, setLostItem] = useState<Item | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
@@ -75,6 +79,15 @@ export default function ItemDetails() {
   const [manualReasonText, setManualReasonText] = useState('');
   const [manualError, setManualError] = useState('');
   const [manualSuccess, setManualSuccess] = useState(false);
+  const [isResubmitting, setIsResubmitting] = useState(false);
+
+  // Dispute State
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [disputeReason, setDisputeReason] = useState('');
+  const [disputeProofUrl, setDisputeProofUrl] = useState('');
+  const [disputeLoading, setDisputeLoading] = useState(false);
+  const [disputeError, setDisputeError] = useState('');
+  const [disputeSuccessMsg, setDisputeSuccessMsg] = useState('');
 
   useEffect(() => {
     if (!id) return;
@@ -91,12 +104,28 @@ export default function ItemDetails() {
       setClaimError('');
       setClaimStatus(null);
       setClaimStatusLoading(false);
+      setDisputeSuccessMsg('');
+      setDisputeError('');
+      setShowDisputeModal(false);
+      setDisputeReason('');
+      setDisputeProofUrl('');
+      setLostItem(null);
 
       let data: Item | null = null;
       try {
-        data = await fetchItemById(id);
+        const itemPromise = fetchItemById(id);
+        const lostItemPromise = (isFromFaculty && lostItemId)
+          ? fetchItemById(lostItemId).catch((err) => {
+              console.error('Failed to load lost item for claim review:', err);
+              return null;
+            })
+          : Promise.resolve(null);
+
+        const [fetchedItem, fetchedLostItem] = await Promise.all([itemPromise, lostItemPromise]);
         if (cancelled) return;
-        setItem(data);
+        setItem(fetchedItem);
+        setLostItem(fetchedLostItem);
+        data = fetchedItem;
       } catch {
         if (!cancelled) {
           setError('Failed to load item details');
@@ -133,7 +162,7 @@ export default function ItemDetails() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, isFromFaculty, lostItemId]);
 
   useEffect(() => {
     if (!item || item.type !== 'found' || !user) {
@@ -199,6 +228,12 @@ export default function ItemDetails() {
     setEditSuccess(false);
     setShowEditModal(true);
   };
+
+  useEffect(() => {
+    if (item && (location.pathname.startsWith('/edit-item') || location.state?.openEdit)) {
+      handleOpenEdit();
+    }
+  }, [item?._id, location.pathname, location.state?.openEdit]);
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -309,19 +344,31 @@ export default function ItemDetails() {
     }
   };
 
-  const handleOpenManualModal = async () => {
+  const handleOpenManualModal = async (resubmit: boolean = false) => {
+    setIsResubmitting(resubmit);
     setManualError('');
     setManualSuccess(false);
     setManualLoading(true);
     setShowManualModal(true);
+    if (resubmit && claimStatus?.lostItemId) {
+      setManualSelectedLost(claimStatus.lostItemId);
+    }
     try {
       const items = await getMyReports();
-      const pendingLost = items.filter(i => i.type === 'lost' && i.status === 'pending');
+      const pendingLost = items.filter(
+        i =>
+          i.type === 'lost' &&
+          (i.status === 'pending' ||
+            (resubmit && i.status === 'claimed') ||
+            (resubmit && claimStatus?.lostItemId && i._id === claimStatus.lostItemId))
+      );
       setUserPendingLostItems(pendingLost);
-      if (pendingLost.length > 0) {
+      if (resubmit && claimStatus?.lostItemId) {
+        setManualSelectedLost(claimStatus.lostItemId);
+      } else if (pendingLost.length > 0) {
         setManualSelectedLost(pendingLost[0]._id);
       }
-    } catch (err) {
+    } catch {
       setManualError('Could not load your lost items.');
     } finally {
       setManualLoading(false);
@@ -335,23 +382,77 @@ export default function ItemDetails() {
     setManualError('');
     setManualLoading(true);
     try {
-      await createManualClaim(item._id, {
-        lostItemId: manualSelectedLost,
-        reasonType: manualReasonType,
-        reasonText: manualReasonType === 'other' ? manualReasonText : ''
-      });
-      setClaimSubmitted(true);
-      setClaimNoRetry(true);
-      setClaimStatus(prev => prev ? { ...prev, hasClaimed: true, canClaim: false } : null);
-      setManualSuccess(true);
+      if (isResubmitting && claimStatus?.claimId) {
+        await resubmitClaim(claimStatus.claimId, {
+          lostItemId: manualSelectedLost,
+          reasonType: manualReasonType,
+          reasonText: manualReasonType === 'other' ? manualReasonText : ''
+        });
+        setClaimSubmitted(true);
+        setClaimNoRetry(true);
+        setClaimStatus(prev => prev ? { ...prev, hasClaimed: true, canClaim: false, canResubmit: false, claimStatus: 'pending' } : null);
+        setManualSuccess(true);
+      } else {
+        await createManualClaim(item._id, {
+          lostItemId: manualSelectedLost,
+          reasonType: manualReasonType,
+          reasonText: manualReasonType === 'other' ? manualReasonText : ''
+        });
+        setClaimSubmitted(true);
+        setClaimNoRetry(true);
+        setClaimStatus(prev => prev ? { ...prev, hasClaimed: true, canClaim: false, canResubmit: false, claimStatus: 'pending' } : null);
+        setManualSuccess(true);
+      }
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
-        setManualError(err.response?.data?.message || 'Could not submit manual claim.');
+        setManualError(err.response?.data?.message || (isResubmitting ? 'Could not resubmit claim.' : 'Could not submit manual claim.'));
       } else {
         setManualError('An unexpected error occurred.');
       }
     } finally {
       setManualLoading(false);
+    }
+  };
+
+  const handleSubmitDispute = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!item) return;
+
+    if (!disputeReason.trim()) {
+      setDisputeError('Please provide a reason for the dispute.');
+      return;
+    }
+
+    setDisputeLoading(true);
+    setDisputeError('');
+
+    try {
+      await submitDispute(item._id, {
+        reason: disputeReason.trim(),
+        proofUrl: disputeProofUrl.trim(),
+      });
+      setItem((prev) =>
+        prev
+          ? {
+              ...prev,
+              isDisputed: true,
+              disputeReason: disputeReason.trim(),
+              disputeProofUrl: disputeProofUrl.trim(),
+            }
+          : null
+      );
+      setDisputeSuccessMsg('Dispute submitted successfully. An administrator will review this case.');
+      setShowDisputeModal(false);
+      setDisputeReason('');
+      setDisputeProofUrl('');
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        setDisputeError(err.response?.data?.message || 'Could not submit dispute.');
+      } else {
+        setDisputeError('An unexpected error occurred while submitting the dispute.');
+      }
+    } finally {
+      setDisputeLoading(false);
     }
   };
 
@@ -429,93 +530,75 @@ export default function ItemDetails() {
     !isOwner &&
     itemIsPending &&
     !isLost &&
+    item.custodyStatus === 'department_received' &&
     claimStatus?.canClaim === true &&
     !claimStatusLoading &&
-    !claimNoRetry;
+    !claimNoRetry &&
+    !isFromFaculty;
 
-  const claimSuccessBanner = claimStatus?.hasClaimed === true || claimSubmitted;
+  const isRejectedClaim = claimStatus?.hasClaimed === true && claimStatus?.claimStatus === 'rejected';
+  const claimSuccessBanner = (claimStatus?.hasClaimed === true && !isRejectedClaim) || claimSubmitted;
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
+  const renderItemCard = (targetItem: Item, isFacultySplit: boolean = false) => {
+    const targetIsLost = targetItem.type === 'lost';
+    const targetItemReporterId = (targetItem.postedBy as any)?._id || targetItem.postedBy;
+    const targetIsOwner = user != null && String(user._id) === String(targetItemReporterId);
+    const isOriginalReporter = targetIsOwner;
+    const targetIsPending = targetItem.status === 'pending' && !targetItem.is_resolved;
 
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <Link
-            to="/dashboard"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to all items
-          </Link>
-          
-          {previousMatchId && (
-            <span className="text-xs font-medium text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full">
-              Arrived from a related item
-            </span>
-          )}
-        </div>
-
-        {error && (
-          <div className="mb-4 flex items-center gap-2.5 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
-            <AlertCircle className="w-4 h-4" />
-            {error}
+    return (
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden h-full flex flex-col">
+        {targetItem.image_url ? (
+          <img
+            src={targetItem.image_url}
+            alt={targetItem.title}
+            className="w-full h-72 object-cover"
+          />
+        ) : (
+          <div className="w-full h-40 bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
+            <Tag className="w-16 h-16 text-gray-300" />
           </div>
         )}
 
-        {(item.status === 'resolved' || item.is_resolved) && (
-          <div className="mb-4 flex items-center gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-sm">
-            <CheckCircle className="w-4 h-4" />
-            Item marked as resolved
-          </div>
-        )}
-
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          {item.image_url ? (
-            <img
-              src={item.image_url}
-              alt={item.title}
-              className="w-full h-72 object-cover"
-            />
-          ) : (
-            <div className="w-full h-40 bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-              <Tag className="w-16 h-16 text-gray-300" />
-            </div>
-          )}
-
-          <div className="p-8">
+        <div className="p-6 sm:p-8 flex-1 flex flex-col justify-between">
+          <div>
             <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
               <div className="flex items-center gap-2">
                 <span
                   className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${
-                    isLost
+                    targetIsLost
                       ? 'bg-red-100 text-red-700'
                       : 'bg-emerald-100 text-emerald-700'
                   }`}
                 >
-                  {isLost ? 'Lost' : 'Found'}
+                  {targetIsLost ? 'Lost' : 'Found'}
                 </span>
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-                  {item.category}
+                  {targetItem.category}
                 </span>
-                {item.status === 'pending' ? (
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide bg-red-100 text-red-700">
-                    Status: Pending
+                {targetItem.status === 'pending' ? (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide bg-amber-100 text-amber-700">
+                    Status: Active
                   </span>
                 ) : (
                   <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide bg-emerald-100 text-emerald-700">
-                    Status: Resolved
+                    Status: Returned
+                  </span>
+                )}
+                {!isFacultySplit && targetItem.status === 'resolved' && targetItem.custodyStatus === 'returned' && targetItem.isDisputed && (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-red-100 text-red-800 border border-red-300">
+                    🚨 Handover Disputed - Under Admin Review
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-1.5 text-xs text-gray-400">
                 <Clock className="w-3.5 h-3.5" />
-                Posted {formatDateTime(item.createdAt)}
+                Posted {formatDateTime(targetItem.createdAt)}
               </div>
             </div>
 
-            <h1 className="text-2xl font-bold text-gray-900 mb-3">{item.title}</h1>
-            <p className="text-gray-600 leading-relaxed mb-6">{item.description}</p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-3">{targetItem.title}</h1>
+            <p className="text-gray-600 leading-relaxed mb-6 whitespace-pre-line">{targetItem.description}</p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
               <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl">
@@ -523,8 +606,8 @@ export default function ItemDetails() {
                   <MapPin className="w-4 h-4 text-blue-600" />
                 </div>
                 <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Location</p>
-                  <p className="text-sm font-medium text-gray-800">{item.location}</p>
+                  <p className="text-xs text-gray-400 mb-0.5">{targetIsLost ? 'Location Lost' : 'Location'}</p>
+                  <p className="text-sm font-medium text-gray-800">{targetItem.location}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl">
@@ -532,52 +615,109 @@ export default function ItemDetails() {
                   <Calendar className="w-4 h-4 text-blue-600" />
                 </div>
                 <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Date {isLost ? 'lost' : 'found'}</p>
-                  <p className="text-sm font-medium text-gray-800">{formatDate(item.date_occurred)}</p>
+                  <p className="text-xs text-gray-400 mb-0.5">Date {targetIsLost ? 'lost' : 'found'}</p>
+                  <p className="text-sm font-medium text-gray-800">{formatDate(targetItem.date_occurred)}</p>
                 </div>
               </div>
             </div>
 
-            {!isLost && (
+            {!targetIsLost && (
               <div className="border-t border-gray-100 pt-6 mb-6">
                 <h3 className="text-sm font-semibold text-gray-900 mb-3">Item Custody Details</h3>
-                {item.custodyStatus === 'department_received' ? (
-                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 space-y-2">
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                      Department Received
+                {targetItem?.custodyStatus === 'awaiting_confirmation' ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-2">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                      Awaiting Confirmation
                     </span>
-                    <p className="text-sm text-gray-800">
-                      <span className="font-semibold">Currently held at:</span>{' '}
-                      {item.custodyLocation || item.custodyDepartment || 'Department desk'}
-                      {item.custodyDepartment && item.custodyLocation ? ` (${item.custodyDepartment})` : ''}
+                    <p className="text-sm text-amber-950 font-medium">
+                      Reported as handed over to {targetItem.custodyDepartment || targetItem.custodyLocation || 'the department'}. Awaiting faculty verification.
                     </p>
-                    {item.receiverName && (
+                    {targetItem.receiverName && (
                       <p className="text-sm text-gray-700">
-                        <span className="font-semibold">Received by:</span> {item.receiverName}
+                        <span className="font-semibold">Received by:</span> {targetItem.receiverName}
                       </p>
                     )}
-                    {item.receiverRole && (
+                    {targetItem.receiverRole && (
                       <p className="text-sm text-gray-700">
-                        <span className="font-semibold">Role:</span> {item.receiverRole}
+                        <span className="font-semibold">Role:</span> {targetItem.receiverRole}
                       </p>
                     )}
-                    {item.handoverNotes && (
+                    {targetItem.handoverNotes && (
                       <p className="text-sm text-gray-700">
-                        <span className="font-semibold">Handover notes:</span> {item.handoverNotes}
+                        <span className="font-semibold">Handover notes:</span> {targetItem.handoverNotes}
                       </p>
                     )}
-                    {item.handoverDate && (
+                    {targetItem.handoverDate && (
                       <p className="text-xs text-gray-500">
-                        Handover date: {new Date(item.handoverDate).toLocaleString()}
+                        Handover reported: {new Date(targetItem.handoverDate).toLocaleString()}
                       </p>
                     )}
                   </div>
-                ) : item.custodyStatus === 'returned' ? (
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 mb-2">
-                      Returned
+                ) : targetItem?.custodyStatus === 'department_received' ? (
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 space-y-2">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      Department Received
                     </span>
-                    <p className="text-sm text-emerald-900">This item has been returned to its owner.</p>
+                    <p className="text-sm text-emerald-950 font-medium">
+                      Verified and in custody at {targetItem.custodyDepartment || targetItem.custodyLocation || 'the department'}.
+                    </p>
+                    {targetItem.receiverName && (
+                      <p className="text-sm text-gray-700">
+                        <span className="font-semibold">Received by:</span> {targetItem.receiverName}
+                      </p>
+                    )}
+                    {targetItem.receiverRole && (
+                      <p className="text-sm text-gray-700">
+                        <span className="font-semibold">Role:</span> {targetItem.receiverRole}
+                      </p>
+                    )}
+                    {targetItem.handoverNotes && (
+                      <p className="text-sm text-gray-700">
+                        <span className="font-semibold">Handover notes:</span> {targetItem.handoverNotes}
+                      </p>
+                    )}
+                    {targetItem.handoverDate && (
+                      <p className="text-xs text-gray-500">
+                        Verified date: {new Date(targetItem.handoverDate).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                ) : targetItem?.custodyStatus === 'returned' ? (
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                        Returned
+                      </span>
+                      {!isFacultySplit && targetItem.isDisputed && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-300 shadow-sm">
+                          🚨 Handover Disputed - Under Admin Review
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-blue-900">Item has been successfully returned to its owner.</p>
+                  </div>
+                ) : targetItem?.custodyStatus === 'rejected' ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300">
+                        🚨 Handover Denied
+                      </span>
+                    </div>
+                    <p className="text-sm text-rose-950 font-medium">
+                      The department could not verify physical receipt of this item. Please review and update your submitted information with the correct details. (Tip: You might have accidentally selected the wrong department.)
+                    </p>
+                    {targetIsOwner && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={handleOpenEdit}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          Update Handover Details
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -592,44 +732,48 @@ export default function ItemDetails() {
               </div>
             )}
 
-            {isLost ? (
+            {targetIsLost ? (
               <div className="border-t border-gray-100 pt-6">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Reporter contact</p>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
+                  {isFacultySplit ? 'Claimant Contact Details' : 'Reporter contact'}
+                </p>
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <a
-                    href={`mailto:${item.contact_email}`}
-                    className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
-                  >
-                    <Mail className="w-4 h-4 text-gray-500" />
-                    {item.contact_email}
-                  </a>
-                  {item.contact_phone && (
+                  {targetItem.contact_email && (
                     <a
-                      href={`tel:${item.contact_phone}`}
+                      href={`mailto:${targetItem.contact_email}`}
+                      className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
+                    >
+                      <Mail className="w-4 h-4 text-gray-500" />
+                      {targetItem.contact_email}
+                    </a>
+                  )}
+                  {targetItem.contact_phone && (
+                    <a
+                      href={`tel:${targetItem.contact_phone}`}
                       className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
                     >
                       <Phone className="w-4 h-4 text-gray-500" />
-                      {item.contact_phone}
+                      {targetItem.contact_phone}
                     </a>
                   )}
                 </div>
               </div>
             ) : (
               <div className="border-t border-gray-100 pt-6">
-                {itemIsPending && user && !isOwner && (
+                {!isFacultySplit && targetIsPending && user && !targetIsOwner && (
                   <>
                     <h3 className="text-lg font-semibold text-gray-900">Think this item belongs to you?</h3>
                     <p className="text-xs text-gray-500 mt-1.5 mb-4 max-w-lg leading-relaxed">
                       You can claim this item if you have reported a matching lost item.
                     </p>
-                    {item.custodyStatus === 'department_received' && (
+                    {targetItem.custodyStatus === 'department_received' && (
                       <p className="text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-4 max-w-lg">
                         If your claim is approved, you may collect this item from the listed department/location after
                         verification.
                       </p>
                     )}
 
-                    {claimStatusLoading && (
+                    {claimStatusLoading && targetItem.custodyStatus === 'department_received' && (
                       <p className="text-xs text-gray-400 mb-4 flex items-center gap-2">
                         <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
                         Checking claim eligibility…
@@ -640,7 +784,8 @@ export default function ItemDetails() {
                       claimStatus &&
                       !claimStatus.hasClaimed &&
                       !claimStatus.canClaim &&
-                      claimStatus.reason && (
+                      claimStatus.reason &&
+                      targetItem.custodyStatus === 'department_received' && (
                         <div className="mb-4 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed">
                           {claimStatus.reason}
                         </div>
@@ -649,8 +794,74 @@ export default function ItemDetails() {
                     {claimSuccessBanner && (
                       <div className="flex items-center gap-2 p-3.5 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-800 text-sm font-medium mb-4">
                         <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                        {claimStatus?.hasClaimed ? 'Claim already submitted' : 'Claim Submitted'}
+                        {claimStatus?.claimStatus === 'approved'
+                          ? 'Claim Approved'
+                          : (claimStatus?.hasClaimed && !claimSubmitted ? 'Claim already submitted' : 'Claim Submitted')}
                       </div>
+                    )}
+
+                    {isRejectedClaim && !claimSubmitted && (
+                      (claimStatus?.itemCustodyStatus === 'returned' || targetItem.custodyStatus === 'returned') ? (
+                        <div className="mb-5 p-4 bg-rose-50 border border-rose-200 rounded-xl">
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div className="flex items-start gap-3">
+                              <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-600 mt-0.5" />
+                              <div>
+                                <p className="font-semibold text-rose-900">Item Already Returned</p>
+                                <p className="mt-0.5 text-rose-800 text-xs sm:text-sm">
+                                  This item has already been returned to someone else. If you believe this is an error, please file a Handover Dispute.
+                                </p>
+                              </div>
+                            </div>
+                            {!targetItem.isDisputed && !isOriginalReporter && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowDisputeModal(true);
+                                  setDisputeError('');
+                                }}
+                                className="inline-flex items-center justify-center px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-[0.98] self-center sm:self-auto"
+                              >
+                                File Handover Dispute
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ) : claimStatus?.canResubmit ? (
+                        <div className="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                          <div className="flex items-start gap-3">
+                            <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-600 mt-0.5" />
+                            <div>
+                              <p className="font-semibold text-amber-900">Claim Rejected</p>
+                              <p className="mt-0.5 text-amber-700 text-xs sm:text-sm">
+                                Your previous claim was rejected by the department.
+                                {claimStatus?.rejectionReason ? ` Reason: ${claimStatus.rejectionReason}.` : ''}{' '}
+                                You have 1 attempt remaining to update your details and resubmit.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenManualModal(true)}
+                                className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-[0.98]"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                Edit &amp; Resubmit Claim
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mb-5 flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm">
+                          <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-600 mt-0.5" />
+                          <div>
+                            <p className="font-semibold text-red-900">Claim Rejected</p>
+                            <p className="mt-0.5 text-red-700 text-xs sm:text-sm">
+                              Your claim for this item was denied
+                              {claimStatus?.rejectionReason ? ` (Reason: ${claimStatus.rejectionReason})` : ''}
+                              {' '}and no further resubmission attempts are available.
+                            </p>
+                          </div>
+                        </div>
+                      )
                     )}
 
                     {claimError && (
@@ -660,75 +871,92 @@ export default function ItemDetails() {
                       </div>
                     )}
 
-                    {showClaimCta && (
-                      <button
-                        type="button"
-                        onClick={handleClaim}
-                        disabled={claimSubmitting || !claimStatus?.canClaim}
-                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl shadow-sm transition-colors mb-5"
-                      >
-                        {claimSubmitting ? (
-                          <>
-                            <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            Submitting…
-                          </>
-                        ) : (
-                          <>
-                            <Handshake className="w-4 h-4" />
-                            Claim this item
-                          </>
+                    {!claimSuccessBanner && targetItem.custodyStatus !== 'department_received' ? (
+                      <div className="mb-5 flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
+                        <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-600 mt-0.5" />
+                        <div>
+                          <p className="font-semibold text-amber-900">Custody Verification Pending</p>
+                          <p className="mt-0.5 text-amber-700 text-xs sm:text-sm">
+                            This item has not yet been verified by the department. You may submit a claim once physical custody is confirmed.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {showClaimCta && (
+                          <button
+                            type="button"
+                            onClick={handleClaim}
+                            disabled={claimSubmitting || !claimStatus?.canClaim}
+                            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl shadow-sm transition-colors mb-5"
+                          >
+                            {claimSubmitting ? (
+                              <>
+                                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                Submitting…
+                              </>
+                            ) : (
+                              <>
+                                <Handshake className="w-4 h-4" />
+                                Claim this item
+                              </>
+                            )}
+                          </button>
                         )}
-                      </button>
-                    )}
 
-                    {user != null && !isOwner && itemIsPending && !isLost && !claimStatusLoading && claimStatus && !claimStatus.canClaim && !claimStatus.hasClaimed && !claimSubmitted && (
-                      <div className="mt-6 border-t border-gray-100 pt-6">
-                        {userPendingLostItems.length > 0 ? (
-                          <>
-                            <h4 className="text-sm font-bold text-gray-800 mb-2">Think this may still be your item?</h4>
-                            <p className="text-xs text-gray-500 mb-4 max-w-lg leading-relaxed">
-                              If the automatic system didn't match your lost report due to differing categories or descriptions, you can request a manual review by an admin.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={handleOpenManualModal}
-                              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 text-sm font-semibold rounded-lg shadow-sm transition-colors"
-                            >
-                              Request Manual Review
-                            </button>
-                          </>
-                        ) : (
-                          <div className="bg-amber-50/50 border border-amber-100 rounded-2xl p-6">
-                            <div className="flex items-center gap-3 mb-3">
-                              <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
-                                <Info className="w-5 h-5" />
+                        {user != null && !targetIsOwner && targetIsPending && !targetIsLost && !claimStatusLoading && claimStatus && !claimStatus.canClaim && !claimStatus.hasClaimed && !claimSubmitted && (
+                          <div className="mt-6 border-t border-gray-100 pt-6">
+                            {userPendingLostItems.length > 0 ? (
+                              <>
+                                <h4 className="text-sm font-bold text-gray-800 mb-2">Think this may still be your item?</h4>
+                                <p className="text-xs text-gray-500 mb-4 max-w-lg leading-relaxed">
+                                  If the automatic system didn't match your lost report due to differing categories or descriptions, you can request a manual review by an admin.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={handleOpenManualModal}
+                                  className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 text-sm font-semibold rounded-lg shadow-sm transition-colors"
+                                >
+                                  Request Manual Review
+                                </button>
+                              </>
+                            ) : (
+                              <div className="bg-amber-50/50 border border-amber-100 rounded-2xl p-6">
+                                <div className="flex items-center gap-3 mb-3">
+                                  <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
+                                    <Info className="w-5 h-5" />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-sm font-bold text-amber-900">No Matching Lost Items</h4>
+                                    <p className="text-xs text-amber-700">You must report your lost item first to submit a claim.</p>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-gray-600 mb-4">
+                                  If you lost this item, please report it in the system. Once reported, you can return here to submit a claim or request manual faculty review.
+                                </p>
+                                <Link
+                                  to="/report?type=lost"
+                                  className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                                >
+                                  <PlusCircle className="w-4 h-4" />
+                                  Report Lost Item
+                                </Link>
                               </div>
-                              <h4 className="text-base font-bold text-gray-900">Want to request a manual review?</h4>
-                            </div>
-                            <p className="text-sm text-gray-600 mb-6 leading-relaxed">
-                              You currently don’t have any active lost item reports. To request a manual review, first create a lost item report that may match this found item.
-                            </p>
-                            <button
-                              onClick={() => navigate('/post', { state: { prefillCategory: item.category, prefillType: 'lost' } })}
-                              className="flex items-center justify-center gap-2 px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-amber-100"
-                            >
-                              <PlusCircle className="w-4 h-4" />
-                              Report Lost Item
-                            </button>
+                            )}
                           </div>
                         )}
-                      </div>
+                      </>
                     )}
                   </>
                 )}
 
-                {itemIsPending && user && isOwner && (
+                {!isFacultySplit && targetIsPending && user && targetIsOwner && (
                   <p className="text-xs text-gray-600 mb-5">
                     You posted this found item. Others can claim it only if they have a matching lost report.
                   </p>
                 )}
 
-                {itemIsPending && !user && (
+                {!isFacultySplit && targetIsPending && !user && (
                   <p className="text-sm text-gray-600 mb-5">
                     <Link to="/login" className="text-blue-600 font-medium hover:text-blue-700">
                       Sign in
@@ -737,27 +965,62 @@ export default function ItemDetails() {
                   </p>
                 )}
 
-                {!itemIsPending && (
-                  <p className="text-xs text-gray-500 mb-5">Claims are not available for resolved listings.</p>
+                {!isFacultySplit && !targetIsPending && (
+                  <div className="border-b border-gray-100 pb-4 mb-4">
+                    {targetItem.status === 'resolved' && targetItem.custodyStatus === 'returned' ? (
+                      targetItem.isDisputed ? (
+                        <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs font-semibold">
+                          🚨 You have disputed this handover. An administrator is investigating.
+                        </div>
+                      ) : (
+                        !isOriginalReporter && (
+                          <div className="p-3.5 bg-orange-50 border border-orange-200 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                            <div>
+                              <p className="text-sm font-bold text-orange-950">Was this item handed to the wrong person?</p>
+                              <p className="text-xs text-orange-800 mt-0.5">
+                                If you believe you are the rightful owner, you can dispute this handover.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowDisputeModal(true);
+                                setDisputeError('');
+                              }}
+                              className="inline-flex items-center justify-center px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-[0.98] flex-shrink-0"
+                            >
+                              Dispute Handover
+                            </button>
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <p className="text-xs text-gray-500">Claims are not available for resolved listings.</p>
+                    )}
+                  </div>
                 )}
 
-                <div className="border-t border-gray-100 pt-5">
-                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Reporter contact</p>
+                <div className={`${!isFacultySplit ? 'border-t border-gray-100 pt-5' : ''}`}>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
+                    {isFacultySplit ? 'Finder / Reporter Contact' : 'Reporter contact'}
+                  </p>
                   <div className="flex flex-col sm:flex-row gap-3">
-                    <a
-                      href={`mailto:${item.contact_email}`}
-                      className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
-                    >
-                      <Mail className="w-4 h-4 text-gray-500" />
-                      {item.contact_email}
-                    </a>
-                    {item.contact_phone && (
+                    {targetItem.contact_email && (
                       <a
-                        href={`tel:${item.contact_phone}`}
+                        href={`mailto:${targetItem.contact_email}`}
+                        className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
+                      >
+                        <Mail className="w-4 h-4 text-gray-500" />
+                        {targetItem.contact_email}
+                      </a>
+                    )}
+                    {targetItem.contact_phone && (
+                      <a
+                        href={`tel:${targetItem.contact_phone}`}
                         className="flex items-center gap-2.5 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors flex-1 justify-center"
                       >
                         <Phone className="w-4 h-4 text-gray-500" />
-                        {item.contact_phone}
+                        {targetItem.contact_phone}
                       </a>
                     )}
                   </div>
@@ -765,7 +1028,7 @@ export default function ItemDetails() {
               </div>
             )}
 
-            {isOwner && item.status === 'pending' && !item.is_resolved && (
+            {!isFacultySplit && targetIsOwner && targetItem.status === 'pending' && !targetItem.is_resolved && (
               <div className="border-t border-gray-100 pt-6 mt-6">
                 <p className="text-xs text-gray-400 mb-3">Owner actions</p>
                 <div className="flex gap-3">
@@ -790,8 +1053,120 @@ export default function ItemDetails() {
             )}
           </div>
         </div>
+      </div>
+    );
+  };
 
-        {isOwner && (
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Navbar />
+
+      <div className={`${isFromFaculty && lostItem ? 'max-w-7xl' : 'max-w-3xl'} mx-auto px-4 sm:px-6 py-8 transition-all`}>
+        <div className="flex items-center justify-between mb-6">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+          
+          {previousMatchId && (
+            <span className="text-xs font-medium text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full">
+              Arrived from a related item
+            </span>
+          )}
+        </div>
+
+        {/* Faculty Split-Screen Review Banner */}
+        {isFromFaculty && lostItem && (
+          <div className="mb-6 bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border border-blue-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                  <Handshake className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                    Claim Comparison Review
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                      Faculty Review
+                    </span>
+                  </h2>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    Compare the claimant's lost item report side-by-side with the found item held in custody. Approval and denial actions remain on the Faculty Dashboard.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-4 flex items-center gap-2.5 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
+            <AlertCircle className="w-4 h-4" />
+            {error}
+          </div>
+        )}
+
+        {disputeSuccessMsg && (
+          <div className="mb-4 flex items-center justify-between gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-sm font-medium">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+              <span>{disputeSuccessMsg}</span>
+            </div>
+            <button
+              onClick={() => setDisputeSuccessMsg('')}
+              className="text-xs text-emerald-700 hover:text-emerald-900 font-bold px-2 py-0.5"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {!isFromFaculty && (item.status === 'resolved' || item.is_resolved) && (
+          <div className="mb-4 flex items-center gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-sm">
+            <CheckCircle className="w-4 h-4" />
+            Item marked as returned
+          </div>
+        )}
+
+        {isFromFaculty && lostItem ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+            {/* Left Column: Claimant's Lost Item Report */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-red-500 ring-4 ring-red-100" />
+                  <h2 className="text-lg font-bold text-gray-900">Claimant's Lost Item Report</h2>
+                </div>
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-50 text-red-700 border border-red-200">
+                  Lost Report #{lostItem._id.slice(-6).toUpperCase()}
+                </span>
+              </div>
+              {renderItemCard(lostItem, true)}
+            </div>
+
+            {/* Right Column: Found Item */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-emerald-500 ring-4 ring-emerald-100" />
+                  <h2 className="text-lg font-bold text-gray-900">Found Item</h2>
+                </div>
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  In Custody #{item._id.slice(-6).toUpperCase()}
+                </span>
+              </div>
+              {renderItemCard(item, true)}
+            </div>
+          </div>
+        ) : (
+          renderItemCard(item, false)
+        )}
+
+        {!isFromFaculty && isOwner && (
           <section className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-8" aria-labelledby="possible-matches-heading">
           <div className="flex items-start gap-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
@@ -927,9 +1302,19 @@ export default function ItemDetails() {
       )}
 
       {showEditModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-xl my-8">
-            <h3 className="text-xl font-bold text-gray-900 mb-6">Edit Item</h3>
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-gray-900/50 backdrop-blur-sm p-4 pt-6 sm:pt-10 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-xl my-4 sm:my-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6 pb-2 border-b border-gray-100">
+              <h3 className="text-xl font-bold text-gray-900">Edit Item</h3>
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Close edit modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             
             {editError && (
               <div className="mb-6 flex items-center gap-2 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
@@ -1130,9 +1515,13 @@ export default function ItemDetails() {
                 <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <CheckCircle className="w-8 h-8 text-emerald-600 animate-pulse" />
                 </div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Request Submitted</h3>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {isResubmitting ? 'Claim Resubmitted' : 'Request Submitted'}
+                </h3>
                 <p className="text-sm text-gray-500 mb-6 px-4">
-                  Manual review submitted successfully.
+                  {isResubmitting
+                    ? 'Your claim was resubmitted successfully and is now pending review.'
+                    : 'Manual review submitted successfully.'}
                 </p>
                 <button
                   onClick={() => setShowManualModal(false)}
@@ -1143,9 +1532,13 @@ export default function ItemDetails() {
               </div>
             ) : (
               <>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Request Manual Review</h3>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {isResubmitting ? 'Edit & Resubmit Claim' : 'Request Manual Review'}
+                </h3>
                 <p className="text-sm text-gray-500 mb-6">
-                  Submit this item for manual review by an administrator. Please select your matching lost item and explain why you believe it matches.
+                  {isResubmitting
+                    ? 'Your previous claim was rejected. You have 1 attempt remaining to update your details and resubmit for review.'
+                    : 'Submit this item for manual review by an administrator. Please select your matching lost item and explain why you believe it matches.'}
                 </p>
 
                 {manualError && (
@@ -1176,10 +1569,14 @@ export default function ItemDetails() {
                     ) : (
                       <select
                         required
-                        disabled={manualLoading}
+                        disabled={manualLoading || isResubmitting}
                         value={manualSelectedLost}
                         onChange={(e) => setManualSelectedLost(e.target.value)}
-                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                        className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${
+                          isResubmitting
+                            ? 'bg-gray-100 border-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'bg-gray-50 border-gray-200'
+                        }`}
                       >
                         <option value="" disabled>Select a lost report...</option>
                         {userPendingLostItems.map(item => (
@@ -1189,10 +1586,17 @@ export default function ItemDetails() {
                         ))}
                       </select>
                     )}
+                    {isResubmitting && (
+                      <p className="text-xs text-amber-700 mt-2 font-medium">
+                        If you need to link a different lost item, please delete this claim and submit a new one.
+                      </p>
+                    )}
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason for manual review</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {isResubmitting ? 'Reason for resubmission / claim update' : 'Reason for manual review'}
+                    </label>
                     <select
                       required
                       disabled={manualLoading || userPendingLostItems.length === 0}
@@ -1239,7 +1643,7 @@ export default function ItemDetails() {
                       disabled={manualLoading || userPendingLostItems.length === 0}
                       className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-xl transition-colors"
                     >
-                      {manualLoading ? 'Submitting...' : 'Submit Request'}
+                      {manualLoading ? (isResubmitting ? 'Resubmitting...' : 'Submitting...') : (isResubmitting ? 'Resubmit Claim' : 'Submit Request')}
                     </button>
                   </div>
                 </form>
@@ -1248,6 +1652,76 @@ export default function ItemDetails() {
           </div>
         </div>
       )}
+      {showDisputeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-lg w-full shadow-xl my-8">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Dispute Item Handover</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              If you believe this item was given to the wrong person, please provide proof of ownership so the Admin can investigate.
+            </p>
+
+            {disputeError && (
+              <div className="mb-6 flex items-center gap-2 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {disputeError}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitDispute} className="space-y-4 text-left">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reason for dispute <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  required
+                  disabled={disputeLoading}
+                  rows={4}
+                  value={disputeReason}
+                  onChange={(e) => setDisputeReason(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all resize-none"
+                  placeholder="Explain why you are the rightful owner and contest this handover..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Proof URL (e.g., Google Drive link to receipt, serial number, or photo)
+                </label>
+                <input
+                  type="url"
+                  disabled={disputeLoading}
+                  value={disputeProofUrl}
+                  onChange={(e) => setDisputeProofUrl(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all"
+                  placeholder="https://drive.google.com/..."
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDisputeModal(false);
+                    setDisputeError('');
+                  }}
+                  disabled={disputeLoading}
+                  className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={disputeLoading || !disputeReason.trim()}
+                  className="px-5 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 text-white text-sm font-medium rounded-xl transition-colors shadow-sm"
+                >
+                  {disputeLoading ? 'Submitting...' : 'Submit Dispute'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

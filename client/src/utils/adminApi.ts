@@ -67,6 +67,16 @@ export const adminApi = {
     return data;
   },
 
+  async closeDispute(itemId: string) {
+    const response = await fetch(`${API_URL}/items/${itemId}/close-dispute`, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to close dispute');
+    return data;
+  },
+
   async getActivity() {
     const response = await fetch(`${API_URL}/activity`, {
       headers: this.getHeaders(),
@@ -76,3 +86,6 @@ export const adminApi = {
     return data;
   },
 };
+
+export const closeDispute = (itemId: string) => adminApi.closeDispute(itemId);
+

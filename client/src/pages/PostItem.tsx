@@ -87,11 +87,11 @@ export default function PostItem() {
         image_url: form.image_url || null,
         contact_email: form.contact_email,
         contact_phone: form.contact_phone || null,
-        custodyLocation: form.type === 'found' ? form.custodyLocation || null : null,
-        custodyDepartment: form.type === 'found' ? form.custodyDepartment || null : null,
-        receiverName: form.type === 'found' ? form.receiverName || null : null,
-        receiverRole: form.type === 'found' ? form.receiverRole || null : null,
-        handoverNotes: form.type === 'found' ? form.handoverNotes || null : null,
+        custodyLocation: form.type === 'found' ? (form.custodyLocation?.trim() || form.custodyDepartment?.trim() || null) : null,
+        custodyDepartment: form.type === 'found' ? (form.custodyDepartment?.trim() || form.custodyLocation?.trim() || null) : null,
+        receiverName: form.type === 'found' ? (form.receiverName?.trim() || null) : null,
+        receiverRole: form.type === 'found' ? (form.receiverRole?.trim() || null) : null,
+        handoverNotes: form.type === 'found' ? (form.handoverNotes?.trim() || null) : null,
       };
 
       await createItem(payload);
@@ -368,9 +368,15 @@ export default function PostItem() {
                       <div className="relative">
                         <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                         <select
-                          name="custodyLocation"
-                          value={form.custodyLocation}
-                          onChange={handleChange}
+                          name="custodyDepartment"
+                          value={form.custodyDepartment}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              custodyDepartment: e.target.value,
+                              custodyLocation: e.target.value,
+                            })
+                          }
                           className="w-full pl-10 pr-8 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
                         >
                           <option value="">Select location (optional)</option>
@@ -389,7 +395,12 @@ export default function PostItem() {
                         type="text"
                         name="custodyDepartment"
                         value={form.custodyDepartment}
-                        onChange={handleChange}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            custodyDepartment: e.target.value,
+                          })
+                        }
                         placeholder="e.g. CSE Department Office"
                         className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
@@ -400,7 +411,12 @@ export default function PostItem() {
                         type="text"
                         name="receiverName"
                         value={form.receiverName}
-                        onChange={handleChange}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            receiverName: e.target.value,
+                          })
+                        }
                         placeholder="e.g. Dr. Kumar"
                         className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
@@ -411,7 +427,12 @@ export default function PostItem() {
                         type="text"
                         name="receiverRole"
                         value={form.receiverRole}
-                        onChange={handleChange}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            receiverRole: e.target.value,
+                          })
+                        }
                         placeholder="e.g. Faculty / Lab Assistant"
                         className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
@@ -421,7 +442,12 @@ export default function PostItem() {
                       <textarea
                         name="handoverNotes"
                         value={form.handoverNotes}
-                        onChange={handleChange}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            handoverNotes: e.target.value,
+                          })
+                        }
                         rows={3}
                         placeholder="e.g. Submitted at 2:30 PM"
                         className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"

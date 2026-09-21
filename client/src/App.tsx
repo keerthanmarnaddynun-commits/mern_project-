@@ -12,6 +12,8 @@ import Profile from './pages/Profile';
 import AdminLogin from './pages/admin/AdminLogin';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import CommunityActivityPage from './pages/CommunityActivityPage';
+import FacultyProtectedRoute from './components/FacultyProtectedRoute';
+import FacultyDashboard from './pages/faculty/FacultyDashboard';
 
 function App() {
   return (
@@ -57,6 +59,14 @@ function App() {
             }
           />
           <Route
+            path="/edit-item/:id"
+            element={
+              <ProtectedRoute>
+                <ItemDetails />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/my-reports"
             element={
               <ProtectedRoute>
@@ -75,6 +85,14 @@ function App() {
           <Route
             path="/community-activity"
             element={<CommunityActivityPage />}
+          />
+          <Route
+            path="/faculty-dashboard"
+            element={
+              <FacultyProtectedRoute>
+                <FacultyDashboard />
+              </FacultyProtectedRoute>
+            }
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

@@ -33,6 +33,30 @@ const claimSchema = new mongoose.Schema(
     manualReasonText: {
       type: String,
     },
+    department: {
+      type: String,
+      default: null,
+    },
+    verificationMethod: {
+      type: String,
+      default: null,
+    },
+    verificationNotes: {
+      type: String,
+      default: null,
+    },
+    retryCount: {
+      type: Number,
+      default: 0,
+    },
+    isPermanentlyRejected: {
+      type: Boolean,
+      default: false,
+    },
+    reason: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );

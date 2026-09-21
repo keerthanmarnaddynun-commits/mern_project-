@@ -1,5 +1,7 @@
 const Item = require('../models/Item');
 const Activity = require('../models/Activity');
+const Dispute = require('../models/Dispute');
+const Claim = require('../models/Claim');
 const { matchOppositePendingSameCategory, confidenceRank } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 
@@ -13,10 +15,11 @@ const getItems = async (req, res) => {
   try {
     const { status } = req.query;
     
-    // Public browse/list should only show active items
     const query = {
       status: { $ne: 'resolved' },
-      is_resolved: { $ne: true }
+      is_resolved: { $ne: true },
+      isHidden: { $ne: true },
+      custodyStatus: { $ne: 'rejected' },
     };
 
     if (status) {
@@ -81,8 +84,14 @@ const createItem = async (req, res) => {
     const normalizedReceiverName = normalizeText(receiverName);
     const normalizedReceiverRole = normalizeText(receiverRole);
     const normalizedHandoverNotes = normalizeText(handoverNotes);
-    const shouldMarkDepartmentReceived =
-      type === 'found' && (normalizedCustodyLocation || normalizedCustodyDepartment);
+    const isCustodyProvided = Boolean(
+      custodyDepartment ||
+      req.body.custodyDepartment ||
+      custodyLocation ||
+      req.body.custodyLocation ||
+      normalizedCustodyDepartment ||
+      normalizedCustodyLocation
+    );
 
     const newItem = new Item({
       title,
@@ -97,14 +106,38 @@ const createItem = async (req, res) => {
       postedBy,
       status: 'pending', // Initialize with pending status
       is_resolved: false,
-      custodyStatus: shouldMarkDepartmentReceived ? 'department_received' : 'not_handed_over',
-      custodyLocation: type === 'found' ? normalizedCustodyLocation : null,
-      custodyDepartment: type === 'found' ? normalizedCustodyDepartment : null,
-      receiverName: type === 'found' ? normalizedReceiverName : null,
-      receiverRole: type === 'found' ? normalizedReceiverRole : null,
-      handoverNotes: type === 'found' ? normalizedHandoverNotes : null,
-      handoverDate: shouldMarkDepartmentReceived ? new Date() : null,
+      custodyStatus: (custodyDepartment || req.body.custodyDepartment || isCustodyProvided)
+        ? 'awaiting_confirmation'
+        : 'not_handed_over',
+      custodyDepartment: normalizedCustodyDepartment || normalizeText(req.body.custodyDepartment) || null,
+      custodyLocation: normalizedCustodyLocation || normalizeText(req.body.custodyLocation) || null,
+      receiverName: normalizedReceiverName || normalizeText(req.body.receiverName) || null,
+      receiverRole: normalizedReceiverRole || normalizeText(req.body.receiverRole) || null,
+      handoverNotes: normalizedHandoverNotes || normalizeText(req.body.handoverNotes) || null,
+      handoverDate: isCustodyProvided ? new Date() : null,
     });
+
+    if (req.body.custodyDepartment || req.body.custodyLocation) {
+      newItem.custodyStatus = 'awaiting_confirmation';
+      if (!newItem.custodyDepartment && normalizedCustodyDepartment) {
+        newItem.custodyDepartment = normalizedCustodyDepartment;
+      }
+      if (!newItem.custodyLocation && normalizedCustodyLocation) {
+        newItem.custodyLocation = normalizedCustodyLocation;
+      }
+      if (!newItem.receiverName && normalizedReceiverName) {
+        newItem.receiverName = normalizedReceiverName;
+      }
+      if (!newItem.receiverRole && normalizedReceiverRole) {
+        newItem.receiverRole = normalizedReceiverRole;
+      }
+      if (!newItem.handoverNotes && normalizedHandoverNotes) {
+        newItem.handoverNotes = normalizedHandoverNotes;
+      }
+      if (!newItem.handoverDate) {
+        newItem.handoverDate = new Date();
+      }
+    }
 
     await newItem.save();
 
@@ -189,7 +222,7 @@ const updateItem = async (req, res) => {
     if (item.type === 'found') {
       const hasCustodyInfo = !!(item.custodyLocation || item.custodyDepartment);
       if (hasCustodyInfo) {
-        item.custodyStatus = item.status === 'resolved' || item.is_resolved ? 'returned' : 'department_received';
+        item.custodyStatus = item.status === 'resolved' || item.is_resolved ? 'returned' : (item.custodyStatus === 'department_received' ? 'department_received' : 'awaiting_confirmation');
         if (!item.handoverDate) {
           item.handoverDate = new Date();
         }
@@ -276,6 +309,154 @@ const getSimilarItems = async (req, res) => {
   }
 };
 
+const confirmItemReceipt = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!req.user || req.user.role !== 'faculty') {
+      return res.status(403).json({ message: 'Only faculty members can confirm item receipt' });
+    }
+
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    item.custodyStatus = 'department_received';
+    await item.save();
+
+    try {
+      await Activity.create({
+        type: 'item_verified',
+        message: `The department has physically received and verified your reported item: ${item.title}.`,
+        actorName: req.user.name,
+        actorEmail: req.user.email,
+        itemTitle: item.title,
+        itemId: item._id,
+        userId: item.postedBy,
+      });
+    } catch (actErr) {
+      console.error('Failed to log item_verified activity:', actErr);
+    }
+
+    res.status(200).json(item);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+const denyItemReceipt = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!req.user || req.user.role !== 'faculty') {
+      return res.status(403).json({ message: 'Only faculty members can deny item receipt' });
+    }
+
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    item.custodyStatus = 'rejected';
+
+    await item.save();
+
+    try {
+      await Activity.create({
+        type: 'handover_denied',
+        message: `Handover denied for your reported item: ${item.title}.`,
+        actorName: req.user.name,
+        itemTitle: item.title,
+        itemId: item._id,
+        userId: item.postedBy,
+      });
+    } catch (actErr) {
+      console.error('Failed to log handover_denied activity:', actErr);
+    }
+
+    res.status(200).json(item);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+const disputeItemHandover = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, proofUrl } = req.body;
+
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    if (item.status !== 'resolved' || item.custodyStatus !== 'returned') {
+      return res.status(400).json({
+        message: 'Only resolved and returned items can be disputed.',
+      });
+    }
+
+    const approvedClaim = await Claim.findOne({
+      itemId: item._id,
+      status: 'approved',
+    });
+
+    const currentOwnerId = approvedClaim?.claimant || item.postedBy;
+
+    // Check or create Dispute document to ensure MongoDB disputes collection is populated
+    let dispute = await Dispute.findOne({
+      itemId: item._id,
+      challengerId: req.user._id,
+      status: 'pending',
+    });
+
+    if (!dispute) {
+      dispute = new Dispute({
+        itemId: item._id,
+        challengerId: req.user._id,
+        currentOwnerId,
+        reason: (reason || 'Handover contested by user').trim(),
+        proofUrl: proofUrl ? proofUrl.trim() : null,
+        status: 'pending',
+        adminNotes: null,
+      });
+      await dispute.save();
+    }
+
+    item.isDisputed = true;
+    item.disputeReason = reason || null;
+    item.disputeProofUrl = proofUrl || null;
+
+    await item.save();
+
+    try {
+      await Activity.create({
+        type: 'dispute_raised',
+        message: `Dispute raised on returned item "${item.title}": ${reason || 'Handover contested by user'}`,
+        actorName: req.user.name,
+        actorEmail: req.user.email,
+        itemTitle: item.title,
+        itemId: item._id,
+        userId: req.user._id,
+        metadata: {
+          disputeId: dispute._id,
+          category: item.category,
+          keyword: extractKeyword(item.title),
+          reason: reason || null,
+          proofUrl: proofUrl || null,
+        },
+      });
+    } catch (logErr) {
+      console.error('Activity log error (disputeItemHandover):', logErr);
+    }
+
+    res.status(200).json(item);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 module.exports = {
   getItems,
   getMyReports,
@@ -284,4 +465,7 @@ module.exports = {
   createItem,
   updateItem,
   deleteItem,
+  confirmItemReceipt,
+  denyItemReceipt,
+  disputeItemHandover,
 };

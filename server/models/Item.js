@@ -55,7 +55,7 @@ const itemSchema = new mongoose.Schema(
     },
     custodyStatus: {
       type: String,
-      enum: ['not_handed_over', 'department_received', 'returned'],
+      enum: ['not_handed_over', 'awaiting_confirmation', 'department_received', 'returned', 'rejected', 'recall_pending', 'ready_for_pickup'],
       default: 'not_handed_over',
     },
     custodyLocation: {
@@ -81,6 +81,22 @@ const itemSchema = new mongoose.Schema(
     handoverDate: {
       type: Date,
       default: null,
+    },
+    isDisputed: {
+      type: Boolean,
+      default: false,
+    },
+    disputeReason: {
+      type: String,
+      default: null,
+    },
+    disputeProofUrl: {
+      type: String,
+      default: null,
+    },
+    isHidden: {
+      type: Boolean,
+      default: false,
     },
   },
   { timestamps: true }

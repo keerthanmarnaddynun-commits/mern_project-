@@ -1,6 +1,6 @@
 export type ItemType = 'lost' | 'found';
 export type ItemStatus = 'pending' | 'resolved';
-export type CustodyStatus = 'not_handed_over' | 'department_received' | 'returned';
+export type CustodyStatus = 'not_handed_over' | 'awaiting_confirmation' | 'department_received' | 'returned' | 'rejected' | 'recall_pending' | 'ready_for_pickup';
 
 export interface Item {
   _id: string;
@@ -23,7 +23,11 @@ export interface Item {
   receiverRole?: string | null;
   handoverNotes?: string | null;
   handoverDate?: string | null;
+  isDisputed?: boolean;
+  disputeReason?: string | null;
+  disputeProofUrl?: string | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface SimilarItemMatch {
@@ -42,7 +46,11 @@ export interface ClaimStatusResponse {
   hasClaimed: boolean;
   claimStatus: 'pending' | 'approved' | 'rejected' | null;
   claimId: string | null;
+  lostItemId?: string | null;
   canClaim: boolean;
+  canResubmit?: boolean;
+  rejectionReason?: string | null;
+  itemCustodyStatus?: string | null;
   reason: string | null;
 }
 
@@ -50,6 +58,8 @@ export interface User {
   _id: string;
   name: string;
   email: string;
+  role?: 'user' | 'faculty';
+  department?: string;
 }
 
 export const CATEGORIES = [
@@ -66,3 +76,32 @@ export const CATEGORIES = [
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
+
+export interface Dispute {
+  _id: string;
+  itemId?: {
+    _id: string;
+    title: string;
+    image_url?: string | null;
+    category?: string;
+    location?: string;
+    custodyStatus?: CustodyStatus;
+    isDisputed?: boolean;
+  };
+  challengerId?: {
+    _id: string;
+    name: string;
+    email: string;
+  };
+  currentOwnerId?: {
+    _id: string;
+    name: string;
+    email: string;
+  };
+  reason: string;
+  proofUrl?: string | null;
+  status: 'pending' | 'recall_pending' | 'ready_for_pickup' | 'resolved' | 'rejected';
+  adminNotes?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}

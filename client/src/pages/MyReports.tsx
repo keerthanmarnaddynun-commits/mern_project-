@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { getMyReports, getReceivedClaims, getMyClaims } from '../services/api';
 import type { Item } from '../types';
 import Navbar from '../components/Navbar';
-import { Activity, Clock, CheckCircle, MapPin, Tag, ArrowRight, PieChart, BarChart2, XCircle } from 'lucide-react';
+import { Activity, Clock, CheckCircle, MapPin, Tag, ArrowRight, PieChart, BarChart2, XCircle, Edit2, AlertCircle } from 'lucide-react';
 import {
   PieChart as RechartsPieChart,
   Pie,
@@ -82,8 +82,8 @@ export default function MyReports() {
   const pieColors = ['#ef4444', '#10b981'];
 
   const barData = [
-    { name: 'Pending', count: stats.pending },
-    { name: 'Resolved', count: stats.resolved },
+    { name: 'Active', count: stats.pending },
+    { name: 'Returned', count: stats.resolved },
   ];
   const barColors = ['#f59e0b', '#3b82f6'];
 
@@ -129,11 +129,11 @@ export default function MyReports() {
                     <p className="text-lg font-semibold text-emerald-600">{stats.found}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500">Pending</p>
+                    <p className="text-xs text-gray-500">Active</p>
                     <p className="text-lg font-semibold text-amber-600">{stats.pending}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500">Resolved</p>
+                    <p className="text-xs text-gray-500">Returned</p>
                     <p className="text-lg font-semibold text-blue-600">{stats.resolved}</p>
                   </div>
                 </div>
@@ -238,7 +238,7 @@ export default function MyReports() {
                       : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
                   }`}
                 >
-                  {tab}
+                  {tab === 'pending' ? 'Active' : tab === 'resolved' ? 'Returned' : tab}
                 </button>
               ))}
             </div>
@@ -265,7 +265,7 @@ export default function MyReports() {
                             item.status === 'resolved' || item.is_resolved ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
                           }`}>
                             {item.status === 'resolved' || item.is_resolved ? <CheckCircle className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
-                            {item.status === 'resolved' || item.is_resolved ? 'Resolved' : 'Pending'}
+                            {item.status === 'resolved' || item.is_resolved ? 'Returned' : 'Active'}
                           </span>
                         </div>
                         <span className="text-[10px] font-medium text-gray-400">
@@ -286,15 +286,43 @@ export default function MyReports() {
                         </div>
                         {item.type === 'found' && (
                           <div className="flex items-center gap-2 text-xs text-gray-600">
-                            <CheckCircle className="w-3.5 h-3.5 text-gray-400" />
+                            {item.custodyStatus === 'rejected' ? (
+                              <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                            ) : (
+                              <CheckCircle className="w-3.5 h-3.5 text-gray-400" />
+                            )}
                             <span className="truncate">
                               Custody:{' '}
                               {item.custodyStatus === 'department_received'
                                 ? item.custodyLocation || item.custodyDepartment || 'Department received'
                                 : item.custodyStatus === 'returned'
                                   ? 'Returned to owner'
-                                  : 'Not handed over'}
+                                  : item.custodyStatus === 'rejected'
+                                    ? 'Handover Denied'
+                                    : 'Not handed over'}
                             </span>
+                          </div>
+                        )}
+                        {item.custodyStatus === 'rejected' && (
+                          <div className="mt-3.5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                                🚨 Handover Denied
+                              </span>
+                            </div>
+                            <p className="text-xs text-rose-800 leading-relaxed font-medium">
+                              The department could not verify physical receipt of this item. Please review and update your submitted information with the correct details. (Tip: You might have accidentally selected the wrong department.)
+                            </p>
+                            <div className="pt-1">
+                              <Link
+                                to={`/edit-item/${item._id}`}
+                                state={{ openEdit: true }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                Update Handover Details
+                              </Link>
+                            </div>
                           </div>
                         )}
                         <div className="flex items-center gap-2 mt-3">

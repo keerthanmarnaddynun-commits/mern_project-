@@ -243,11 +243,72 @@ const getAllItems = async (req, res) => {
   try {
     const items = await Item.find()
       .sort({ createdAt: -1 })
-      .populate('postedBy', 'name email');
-    res.json(items);
+      .populate('postedBy', 'name email')
+      .lean();
+
+    const itemIds = items.map((i) => i._id);
+    const approvedClaims = await Claim.find({
+      itemId: { $in: itemIds },
+      status: 'approved',
+    })
+      .populate('claimant', 'name email')
+      .lean();
+
+    const claimMap = {};
+    approvedClaims.forEach((c) => {
+      claimMap[c.itemId.toString()] = c.claimant;
+    });
+
+    const itemsWithClaimant = items.map((item) => ({
+      ...item,
+      claimant: claimMap[item._id.toString()] || null,
+    }));
+
+    res.json(itemsWithClaimant);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error fetching all items' });
+  }
+};
+
+// PATCH /api/admin/items/:id/close-dispute
+const closeDispute = async (req, res) => {
+  try {
+    if (!req.admin) {
+      return res.status(403).json({ message: 'Access denied: Admin only' });
+    }
+
+    const item = await Item.findById(req.params.id).populate('postedBy', 'name email');
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    item.isDisputed = false;
+    // Set handoverDate to epoch zero to immediately age out of public 48-hour feed
+    item.handoverDate = new Date(0);
+    await item.save();
+
+    // Create an Activity log entry stating the admin resolved/closed the dispute
+    try {
+      await Activity.create({
+        type: 'dispute_closed',
+        message: `Admin resolved and closed dispute for item "${item.title}". Handover aged out and item locked.`,
+        actorName: 'Admin',
+        actorEmail: req.admin.email,
+        itemId: item._id,
+        itemTitle: item.title,
+      });
+    } catch (logErr) {
+      console.error('Activity log error (close dispute):', logErr);
+    }
+
+    res.json({
+      message: 'Dispute closed and item locked successfully',
+      item,
+    });
+  } catch (error) {
+    console.error('Error closing dispute:', error);
+    res.status(500).json({ message: 'Server error closing dispute' });
   }
 };
 
@@ -272,5 +333,7 @@ module.exports = {
   approveClaim,
   rejectClaim,
   getAllItems,
-  getActivity
+  getActivity,
+  closeDispute,
 };
+

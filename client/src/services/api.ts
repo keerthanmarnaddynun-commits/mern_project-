@@ -1,12 +1,12 @@
 import axios from 'axios';
-import type { ClaimStatusResponse, Item, SimilarItemsResponse, User } from '../types';
+import type { ClaimStatusResponse, Dispute, Item, SimilarItemsResponse, User } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 const API = axios.create({ baseURL: API_BASE_URL });
 
 API.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -117,3 +117,88 @@ export async function getMyClaims(): Promise<any[]> {
   const response = await API.get('/claims/my-claims');
   return response.data;
 }
+
+export const confirmItemReceipt = async (itemId: string) => {
+  const { data } = await API.patch('/items/' + itemId + '/confirm-receipt');
+  return data;
+};
+
+export const denyItemReceipt = async (itemId: string) => {
+  const { data } = await API.patch('/items/' + itemId + '/deny-receipt');
+  return data;
+};
+
+export const getDepartmentClaims = async () => {
+  const { data } = await API.get('/claims/department');
+  return data;
+};
+
+export const approveClaim = async (
+  claimId: string,
+  data: { verificationMethod: string; verificationNotes: string }
+) => {
+  const { data: res } = await API.patch(`/claims/${claimId}/approve`, data);
+  return res;
+};
+
+export const facultyApproveClaim = approveClaim;
+
+export const rejectClaim = async (
+  claimId: string,
+  payload?: { reason?: string; preventResubmit?: boolean }
+) => {
+  const { data } = await API.patch('/claims/' + claimId + '/reject', payload || {});
+  return data;
+};
+
+export const resubmitClaim = async (
+  claimId: string,
+  payload: { lostItemId?: string; reasonType?: string; reasonText?: string }
+) => {
+  const { data } = await API.patch('/claims/' + claimId + '/resubmit', payload);
+  return data;
+};
+
+export const getRecentlyReturned = async () => {
+  const { data } = await API.get('/claims/recently-returned');
+  return data;
+};
+
+export const disputeItemHandover = async (itemId: string, payload: { reason: string; proofUrl: string }) => {
+  const { data } = await API.post('/items/' + itemId + '/dispute', payload);
+  return data;
+};
+
+export const submitDispute = async (
+  itemId: string,
+  payload: { reason: string; proofUrl?: string }
+) => {
+  const { data } = await API.post('/disputes', { itemId, ...payload });
+  return data;
+};
+
+export const getDisputes = async (): Promise<Dispute[]> => {
+  const { data } = await API.get('/disputes');
+  return Array.isArray(data) ? data : data?.disputes || [];
+};
+
+export const resolveDispute = async (
+  id: string,
+  payload: { action: 'approve' | 'reject'; adminNotes?: string }
+) => {
+  const { data } = await API.patch(`/disputes/${id}/resolve`, payload);
+  return data;
+};
+
+export const confirmReturn = async (id: string) => {
+  const { data } = await API.patch(`/disputes/${id}/recover`);
+  return data;
+};
+
+export const getUserNotifications = async () => {
+  const { data } = await API.get('/notifications');
+  return Array.isArray(data) ? data : [];
+};
+
+
+

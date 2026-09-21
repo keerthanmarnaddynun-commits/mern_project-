@@ -8,7 +8,8 @@ const {
   approveClaim,
   rejectClaim,
   getAllItems,
-  getActivity
+  getActivity,
+  closeDispute,
 } = require('../controllers/adminController');
 
 // Public admin route
@@ -20,6 +21,7 @@ router.get('/claims', protectAdmin, getClaims);
 router.patch('/claims/:claimId/approve', protectAdmin, approveClaim);
 router.patch('/claims/:claimId/reject', protectAdmin, rejectClaim);
 router.get('/items', protectAdmin, getAllItems);
+router.patch('/items/:id/close-dispute', protectAdmin, closeDispute);
 router.get('/activity', protectAdmin, getActivity);
 
 module.exports = router;
