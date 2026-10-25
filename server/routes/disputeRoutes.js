@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/authMiddleware');
+const validateObjectId = require('../middleware/validateObjectId');
 const {
   submitDispute,
   getAllDisputes,
@@ -13,7 +14,7 @@ router.post('/', protect, submitDispute);
 
 // Admin & Faculty routes
 router.get('/', protect, authorize('admin', 'faculty'), getAllDisputes);
-router.patch('/:id/resolve', protect, authorize('admin', 'faculty'), resolveDispute);
-router.patch('/:id/recover', protect, authorize('admin', 'faculty'), confirmReturn);
+router.patch('/:id/resolve', protect, authorize('admin', 'faculty'), validateObjectId, resolveDispute);
+router.patch('/:id/recover', protect, authorize('admin', 'faculty'), validateObjectId, confirmReturn);
 
 module.exports = router;

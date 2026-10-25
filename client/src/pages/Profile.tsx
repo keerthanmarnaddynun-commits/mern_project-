@@ -56,8 +56,7 @@ export default function Profile() {
   };
 
   const confirmLogout = async () => {
-    await signOut();
-    navigate('/login');
+    await signOut(navigate);
   };
 
   const handleDeleteAccount = async () => {

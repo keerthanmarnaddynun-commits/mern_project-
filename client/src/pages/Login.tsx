@@ -1,10 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Search, Mail, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const sessionMessage = (location.state as { sessionMessage?: string } | null)?.sessionMessage;
@@ -14,19 +14,29 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // If already authenticated, redirect to appropriate portal
+  useEffect(() => {
+    if (user) {
+      if (user.role === 'admin') {
+        navigate('/admin/dashboard', { replace: true });
+      } else if (user.role === 'faculty') {
+        navigate('/faculty-dashboard', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
+      }
+    }
+  }, [user, navigate]);
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
       const res = await login(email, password);
-      if (res.isAdmin && res.token) {
-        localStorage.setItem('adminToken', res.token);
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        navigate('/admin');
+      if (res.isAdmin) {
+        navigate('/admin/dashboard', { replace: true });
       } else {
-        navigate('/dashboard');
+        navigate('/dashboard', { replace: true });
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid email or password');
@@ -65,7 +75,7 @@ export default function Login() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-5" autoComplete="off">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Email address
@@ -74,6 +84,9 @@ export default function Login() {
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-400 w-4 h-4" />
                 <input
                   type="email"
+                  name="email"
+                  id="email"
+                  autoComplete="off"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -91,6 +104,9 @@ export default function Login() {
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type={showPassword ? 'text' : 'password'}
+                  name="password"
+                  id="password"
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required

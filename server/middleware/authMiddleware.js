@@ -6,13 +6,17 @@ const User = require('../models/User');
  * Verifies JWT, loads user, sets req.user (Mongoose document, password excluded).
  */
 const protect = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  let token = null;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Not authorized, no token' });
+  // 1. Check HttpOnly cookie
+  if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  }
+  // 2. Check Authorization Bearer header
+  else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7).trim();
   }
 
-  const token = authHeader.slice(7).trim();
   if (!token) {
     return res.status(401).json({ message: 'Not authorized, no token' });
   }
@@ -73,4 +77,22 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+/**
+ * Protect middleware specifically for admin routes
+ */
+const adminProtect = async (req, res, next) => {
+  return protect(req, res, () => {
+    const role = req.user?.role || req.admin?.role;
+    if (role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized, admin only' });
+    }
+    next();
+  });
+};
+
+module.exports = {
+  protect,
+  authorize,
+  adminProtect,
+  protectAdmin: adminProtect,
+};

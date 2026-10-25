@@ -6,24 +6,29 @@ const Activity = require('../models/Activity');
 const Notification = require('../models/Notification');
 
 const submitDispute = async (req, res) => {
+  const itemId = req.body.itemId || req.params.itemId;
+  const { reason, proofUrl } = req.body || {};
+
+  if (!itemId || !mongoose.Types.ObjectId.isValid(itemId)) {
+    return res.status(400).json({ message: 'Valid item ID is required' });
+  }
+
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ message: 'Dispute reason is required' });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const itemId = req.body.itemId || req.params.itemId;
-    const { reason, proofUrl } = req.body || {};
-
-    if (!itemId || !mongoose.Types.ObjectId.isValid(itemId)) {
-      return res.status(400).json({ message: 'Valid item ID is required' });
-    }
-
-    if (!reason || !reason.trim()) {
-      return res.status(400).json({ message: 'Dispute reason is required' });
-    }
-
-    const item = await Item.findById(itemId);
+    const item = await Item.findById(itemId).session(session);
     if (!item) {
+      await session.abortTransaction();
       return res.status(404).json({ message: 'Item not found' });
     }
 
     if (item.custodyStatus !== 'returned') {
+      await session.abortTransaction();
       return res.status(400).json({
         message: 'Only items with returned custody status can be disputed.',
       });
@@ -32,9 +37,10 @@ const submitDispute = async (req, res) => {
     const approvedClaim = await Claim.findOne({
       itemId: item._id,
       status: 'approved',
-    });
+    }).session(session);
 
     if (!approvedClaim || !approvedClaim.claimant) {
+      await session.abortTransaction();
       return res.status(404).json({
         message: 'No approved claim found for this item to contest.',
       });
@@ -43,6 +49,7 @@ const submitDispute = async (req, res) => {
     const currentOwnerId = approvedClaim.claimant;
 
     if (currentOwnerId.toString() === req.user._id.toString()) {
+      await session.abortTransaction();
       return res.status(400).json({
         message: 'You cannot dispute an item that was returned to you.',
       });
@@ -52,9 +59,10 @@ const submitDispute = async (req, res) => {
       itemId: item._id,
       challengerId: req.user._id,
       status: 'pending',
-    });
+    }).session(session);
 
     if (existingPendingDispute) {
+      await session.abortTransaction();
       return res.status(400).json({
         message: 'You already have a pending dispute for this item.',
       });
@@ -71,26 +79,20 @@ const submitDispute = async (req, res) => {
       adminNotes: null,
     });
 
-    // 2. Explicitly persist to MongoDB before logging activity or sending response
-    const savedDispute = await dispute.save();
+    // 2. Persist to MongoDB with session
+    const savedDispute = await dispute.save({ session });
 
-    if (!savedDispute || !savedDispute._id) {
-      return res.status(500).json({
-        message: 'Failed to persist dispute to database. Dispute document was not created.',
-      });
-    }
-
-    // 3. Update Item flags
+    // 3. Update Item flags with session
     item.isDisputed = true;
     item.disputeReason = reason.trim();
     if (proofUrl && proofUrl.trim()) {
       item.disputeProofUrl = proofUrl.trim();
     }
-    await item.save();
+    await item.save({ session });
 
-    // 4. Ensure Activity log is only created AFTER the Dispute has been successfully saved
-    try {
-      await Activity.create({
+    // 4. Activity log with session
+    await Activity.create([
+      {
         type: 'dispute_raised',
         message: `Dispute raised on returned item "${item.title}": ${reason.trim()}`,
         actorName: req.user.name,
@@ -105,21 +107,24 @@ const submitDispute = async (req, res) => {
           reason: reason.trim(),
           proofUrl: proofUrl ? proofUrl.trim() : null,
         },
-      });
-    } catch (actErr) {
-      console.error('Activity log error (submitDispute):', actErr);
-    }
+      }
+    ], { session });
+
+    await session.commitTransaction();
 
     return res.status(201).json({
       message: 'Dispute submitted successfully',
       dispute: savedDispute,
     });
   } catch (error) {
+    await session.abortTransaction();
     console.error('submitDispute error:', error);
     return res.status(500).json({
       message: 'Server error submitting dispute',
       error: error.message,
     });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -129,7 +134,8 @@ const getAllDisputes = async (req, res) => {
       .populate('itemId', 'title image_url category location custodyStatus isDisputed')
       .populate('challengerId', 'name email')
       .populate('currentOwnerId', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(100);
 
     return res.json(disputes);
   } catch (error) {
@@ -266,30 +272,37 @@ const resolveDispute = async (req, res) => {
 };
 
 const confirmReturn = async (req, res) => {
+  const { id } = req.params;
+
+  if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: 'Valid dispute ID is required' });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const { id } = req.params;
-
-    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Valid dispute ID is required' });
-    }
-
     const dispute = await Dispute.findById(id)
       .populate('itemId')
       .populate('challengerId', 'name email')
-      .populate('currentOwnerId', 'name email');
+      .populate('currentOwnerId', 'name email')
+      .session(session);
 
     if (!dispute) {
+      await session.abortTransaction();
       return res.status(404).json({ message: 'Dispute not found' });
     }
 
     if (dispute.status !== 'recall_pending') {
+      await session.abortTransaction();
       return res.status(400).json({
         message: `Only disputes in 'recall_pending' status can be confirmed as returned. Current status is '${dispute.status}'.`,
       });
     }
 
-    const item = await Item.findById(dispute.itemId?._id || dispute.itemId);
+    const item = await Item.findById(dispute.itemId?._id || dispute.itemId).session(session);
     if (!item) {
+      await session.abortTransaction();
       return res.status(404).json({ message: 'Associated item not found' });
     }
 
@@ -297,17 +310,17 @@ const confirmReturn = async (req, res) => {
     item.custodyStatus = 'ready_for_pickup';
     item.isDisputed = false;
 
-    await dispute.save();
-    await item.save();
+    await dispute.save({ session });
+    await item.save({ session });
 
     const actorName = req.user?.name || req.admin?.email || 'Administrator';
     const actorEmail = req.user?.email || req.admin?.email || 'admin@system.local';
 
-    // Notification for the challengerId (the winner)
-    try {
-      const challengerUserId = dispute.challengerId?._id || dispute.challengerId;
-      if (challengerUserId) {
-        await Notification.create({
+    // Notification for challenger using session
+    const challengerUserId = dispute.challengerId?._id || dispute.challengerId;
+    if (challengerUserId) {
+      await Notification.create([
+        {
           userId: challengerUserId,
           message: 'Your item has been recovered and is ready for pickup.',
           type: 'item_recovered',
@@ -315,15 +328,13 @@ const confirmReturn = async (req, res) => {
           itemId: item._id,
           itemTitle: item.title,
           disputeId: dispute._id,
-        });
-      }
-    } catch (notifErr) {
-      console.error('Notification creation error (confirmReturn):', notifErr);
+        }
+      ], { session });
     }
 
-    // Log Activity (type: 'item_recovered')
-    try {
-      await Activity.create({
+    // Log Activity using session
+    await Activity.create([
+      {
         type: 'item_recovered',
         message: `Item "${item.title}" recovered from previous owner and is now ready for pickup by challenger.`,
         actorName,
@@ -336,10 +347,10 @@ const confirmReturn = async (req, res) => {
           challengerId: dispute.challengerId?._id || null,
           currentOwnerId: dispute.currentOwnerId?._id || null,
         },
-      });
-    } catch (actErr) {
-      console.error('Activity logging error (confirmReturn):', actErr);
-    }
+      }
+    ], { session });
+
+    await session.commitTransaction();
 
     return res.json({
       message: 'Item return confirmed successfully. Item is now ready for pickup.',
@@ -347,11 +358,14 @@ const confirmReturn = async (req, res) => {
       item,
     });
   } catch (error) {
+    await session.abortTransaction();
     console.error('confirmReturn error:', error);
     return res.status(500).json({
       message: 'Server error confirming return',
       error: error.message,
     });
+  } finally {
+    session.endSession();
   }
 };
 

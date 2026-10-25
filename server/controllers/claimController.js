@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 const Claim = require('../models/Claim');
 const Item = require('../models/Item');
 const Activity = require('../models/Activity');
+const Dispute = require('../models/Dispute');
+const Notification = require('../models/Notification');
 const {
   pickBestMatchingLostForFound,
   getEligibleUserLostFilter,
@@ -300,8 +302,9 @@ const getReceivedClaims = async (req, res) => {
     const receivedClaims = await Claim.find({ itemId: { $in: foundItemIds } })
       .populate('itemId', 'title category location date_occurred')
       .populate('lostItemId', 'title category location date_occurred')
-      .populate('claimant', 'name')
+      .populate('claimant', 'name email')
       .sort({ createdAt: -1 })
+      .limit(100)
       .lean();
 
     // Sort pending claims first
@@ -324,6 +327,7 @@ const getMyClaims = async (req, res) => {
       .populate('itemId', 'title category location date_occurred status is_resolved')
       .populate('lostItemId', 'title category location date_occurred status is_resolved')
       .sort({ createdAt: -1 })
+      .limit(100)
       .lean();
 
     res.status(200).json(claims);
@@ -350,6 +354,7 @@ const getDepartmentClaims = async (req, res) => {
         populate: { path: 'postedBy', select: 'name email' },
       })
       .sort({ createdAt: 1 })
+      .limit(100)
       .lean();
 
     const validClaims = claims.filter(
@@ -364,50 +369,144 @@ const getDepartmentClaims = async (req, res) => {
 };
 
 const approveClaim = async (req, res) => {
+  if (!req.user || (req.user.role !== 'faculty' && req.user.role !== 'admin')) {
+    return res.status(403).json({ message: 'Access denied. Faculty or Admin role required.' });
+  }
+
+  const { id } = req.params;
+  if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: 'Invalid claim ID' });
+  }
+
+  const { verificationMethod, verificationNotes } = req.body || {};
+  if (
+    !verificationMethod ||
+    !verificationNotes ||
+    !verificationMethod.toString().trim() ||
+    !verificationNotes.toString().trim()
+  ) {
+    return res.status(400).json({
+      message: 'Verification method and verification notes are required to approve claim.',
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    if (!req.user || req.user.role !== 'faculty') {
-      return res.status(403).json({ message: 'Access denied. Faculty role required.' });
-    }
-
-    const { id } = req.params;
-    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Invalid claim ID' });
-    }
-
-    const { verificationMethod, verificationNotes } = req.body || {};
-    if (
-      !verificationMethod ||
-      !verificationNotes ||
-      !verificationMethod.toString().trim() ||
-      !verificationNotes.toString().trim()
-    ) {
-      return res.status(400).json({
-        message: 'Verification method and verification notes are required to approve claim.',
-      });
-    }
-
     const claim = await Claim.findById(id)
       .populate('claimant', 'name email')
       .populate('itemId')
-      .populate('lostItemId');
+      .populate('lostItemId')
+      .session(session);
 
     if (!claim) {
+      await session.abortTransaction();
       return res.status(404).json({ message: 'Claim not found' });
     }
 
-    if (claim.status !== 'pending') {
+    if (!claim.itemId) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: 'Associated item for this claim could not be found' });
+    }
+
+    const isReadyForPickup = claim.itemId.custodyStatus === 'ready_for_pickup';
+
+    if (!isReadyForPickup && claim.status !== 'pending') {
+      await session.abortTransaction();
       return res.status(400).json({ message: `Claim is already ${claim.status}` });
     }
 
-    if (!claim.itemId) {
-      return res.status(400).json({ message: 'Associated item for this claim could not be found' });
+    // Handle ready_for_pickup handover following resolved dispute
+    if (isReadyForPickup) {
+      // 1. Query Dispute collection for the resolved dispute linked to this itemId
+      const dispute = await Dispute.findOne({
+        itemId: claim.itemId._id,
+        status: { $in: ['resolved', 'ready_for_pickup'] },
+      }).sort({ updatedAt: -1 }).session(session);
+
+      const originalOwnerId = dispute?.currentOwnerId;
+
+      // 2. Find original incorrect claim and update status to 'revoked'
+      let incorrectClaim = null;
+      if (originalOwnerId) {
+        incorrectClaim = await Claim.findOne({
+          itemId: claim.itemId._id,
+          claimant: originalOwnerId,
+        }).session(session);
+      }
+      if (!incorrectClaim) {
+        incorrectClaim = await Claim.findOne({
+          itemId: claim.itemId._id,
+          _id: { $ne: claim._id },
+          status: 'approved',
+        }).session(session);
+      }
+
+      if (incorrectClaim) {
+        incorrectClaim.status = 'revoked';
+        incorrectClaim.reason = 'Claim revoked following dispute resolution and handover to rightful owner.';
+        await incorrectClaim.save({ session });
+      }
+
+      // 3. Find/approve challenger's claim
+      claim.status = 'approved';
+      claim.verificationMethod = verificationMethod.toString().trim();
+      claim.verificationNotes = verificationNotes.toString().trim();
+      await claim.save({ session });
+
+      // 4. Update Item
+      claim.itemId.status = 'resolved';
+      claim.itemId.is_resolved = true;
+      claim.itemId.custodyStatus = 'returned';
+      claim.itemId.handoverDate = new Date();
+      claim.itemId.handoverNotes = verificationNotes.toString().trim();
+      await claim.itemId.save({ session });
+
+      if (claim.lostItemId) {
+        await Item.findByIdAndUpdate(claim.lostItemId._id || claim.lostItemId, {
+          status: 'resolved',
+          is_resolved: true,
+        }, { session });
+      }
+
+      // 5. Log Activity (type: 'handover_completed')
+      await Activity.create([
+        {
+          type: 'handover_completed',
+          message: `Department (${req.user.department || req.user.role || 'Staff'}) handed over recovered item "${claim.itemId.title}" to rightful owner ${claim.claimant?.name || 'claimant'}. Verification: ${claim.verificationMethod}.`,
+          actorName: req.user.name,
+          actorEmail: req.user.email,
+          itemTitle: claim.itemId.title,
+          relatedItemTitle: claim.lostItemId ? claim.lostItemId.title : null,
+          claimId: claim._id,
+          itemId: claim.itemId._id,
+          userId: claim.claimant?._id || claim.claimant,
+          metadata: {
+            disputeId: dispute?._id || null,
+            challengerId: claim.claimant?._id || claim.claimant,
+            revokedClaimOwnerId: originalOwnerId || null,
+            verificationMethod: claim.verificationMethod,
+            verificationNotes: claim.verificationNotes,
+            custodyStatus: 'returned',
+          },
+        }
+      ], { session });
+
+      await session.commitTransaction();
+
+      return res.status(200).json({
+        message: 'Claim approved and recovered item custody marked as returned successfully',
+        approvedClaim: claim,
+        revokedClaim: incorrectClaim,
+      });
     }
 
     // Set the claim status to 'approved' and save audit verification fields
     claim.status = 'approved';
     claim.verificationMethod = verificationMethod.toString().trim();
     claim.verificationNotes = verificationNotes.toString().trim();
-    await claim.save();
+    await claim.save({ session });
 
     // Update Found Item: status resolved, is_resolved true, custodyStatus returned, handoverDate now
     await Item.findByIdAndUpdate(claim.itemId._id, {
@@ -415,14 +514,14 @@ const approveClaim = async (req, res) => {
       is_resolved: true,
       custodyStatus: 'returned',
       handoverDate: new Date(),
-    });
+    }, { session });
 
     // Update Linked Lost Item (if it exists): status resolved, is_resolved true
     if (claim.lostItemId) {
       await Item.findByIdAndUpdate(claim.lostItemId._id, {
         status: 'resolved',
         is_resolved: true,
-      });
+      }, { session });
     }
 
     // Reject all other pending claims for this exact itemId
@@ -434,12 +533,13 @@ const approveClaim = async (req, res) => {
           reason: 'Item was successfully claimed by another user.',
           isPermanentlyRejected: true,
         },
-      }
+      },
+      { session }
     );
 
-    // Create Activity log entry recording department handover with audit trail
-    try {
-      await Activity.create({
+    // Create Activity log entries recording department handover with audit trail
+    const activitiesToLog = [
+      {
         type: 'item_resolved',
         message: `Department (${req.user.department || 'Faculty'}) handed over item "${claim.itemId.title}" to ${claim.claimant?.name || 'claimant'}. Verification: ${claim.verificationMethod}. Notes: "${claim.verificationNotes}".`,
         actorName: req.user.name,
@@ -457,9 +557,8 @@ const approveClaim = async (req, res) => {
           verificationMethod: claim.verificationMethod,
           verificationNotes: claim.verificationNotes,
         },
-      });
-
-      await Activity.create({
+      },
+      {
         type: 'claim_approved',
         message: `Faculty member (${req.user.name}) approved claim for "${claim.itemId.title}". Verification: ${claim.verificationMethod}.`,
         actorName: req.user.name,
@@ -473,19 +572,21 @@ const approveClaim = async (req, res) => {
           verificationMethod: claim.verificationMethod,
           verificationNotes: claim.verificationNotes,
         },
-      });
-
-      if (otherClaims.modifiedCount > 0) {
-        await Activity.create({
-          type: 'claim_auto_rejected',
-          message: `${otherClaims.modifiedCount} other claim(s) for "${claim.itemId.title}" were automatically rejected following department handover.`,
-          actorName: 'System',
-          itemId: claim.itemId._id,
-        });
       }
-    } catch (logErr) {
-      console.error('Activity log error (faculty approve claim):', logErr);
+    ];
+
+    if (otherClaims.modifiedCount > 0) {
+      activitiesToLog.push({
+        type: 'claim_auto_rejected',
+        message: `${otherClaims.modifiedCount} other claim(s) for "${claim.itemId.title}" were automatically rejected following department handover.`,
+        actorName: 'System',
+        itemId: claim.itemId._id,
+      });
     }
+
+    await Activity.create(activitiesToLog, { session });
+
+    await session.commitTransaction();
 
     return res.status(200).json({
       message: 'Claim approved and item custody marked as returned successfully',
@@ -493,8 +594,11 @@ const approveClaim = async (req, res) => {
       autoRejectedCount: otherClaims.modifiedCount || 0,
     });
   } catch (error) {
+    await session.abortTransaction();
     console.error('approveClaim error:', error);
     return res.status(500).json({ message: 'Server error approving claim', error: error.message });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -576,6 +680,7 @@ const getRecentlyReturned = async (req, res) => {
       .populate('lostItemId')
       .populate('claimant', 'name email')
       .sort({ updatedAt: -1 })
+      .limit(100)
       .lean();
 
     return res.status(200).json(claims);
@@ -595,8 +700,8 @@ const resubmitClaim = async (req, res) => {
       return res.status(404).json({ message: 'Claim not found' });
     }
 
-    if (claim.claimant.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Not authorized to resubmit this claim' });
+    if (claim.claimant.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to modify this record' });
     }
 
     if (claim.isPermanentlyRejected || (claim.retryCount || 0) >= 1) {
@@ -655,6 +760,82 @@ const resubmitClaim = async (req, res) => {
   }
 };
 
+const updateClaim = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid claim ID' });
+    }
+
+    const claim = await Claim.findById(id);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    // Strict Ownership Check (BOLA Protection)
+    if (claim.claimant.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to modify this record' });
+    }
+
+    if (claim.status !== 'pending') {
+      return res.status(400).json({ message: `Cannot modify a claim that is already ${claim.status}` });
+    }
+
+    const { manualReasonType, manualReasonText, reason } = req.body || {};
+    if (manualReasonType !== undefined) claim.manualReasonType = manualReasonType;
+    if (manualReasonText !== undefined) claim.manualReasonText = manualReasonText;
+    if (reason !== undefined) claim.reason = reason;
+
+    await claim.save();
+    return res.status(200).json({ message: 'Claim updated successfully', claim });
+  } catch (error) {
+    console.error('updateClaim error:', error);
+    return res.status(500).json({ message: 'Server error updating claim', error: error.message });
+  }
+};
+
+const deleteClaim = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid claim ID' });
+    }
+
+    const claim = await Claim.findById(id);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    // Strict Ownership Check (BOLA Protection)
+    if (claim.claimant.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to modify this record' });
+    }
+
+    await claim.deleteOne();
+    return res.status(200).json({ message: 'Claim deleted successfully' });
+  } catch (error) {
+    console.error('deleteClaim error:', error);
+    return res.status(500).json({ message: 'Server error deleting claim', error: error.message });
+  }
+};
+
+const getAllClaims = async (req, res) => {
+  try {
+    const claims = await Claim.find()
+      .populate('itemId', 'title category location date_occurred')
+      .populate('lostItemId', 'title category location date_occurred')
+      .populate('claimant', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+    return res.status(200).json(claims);
+  } catch (error) {
+    return res.status(500).json({ message: 'Server error fetching claims', error: error.message });
+  }
+};
+
+const getUserClaims = getMyClaims;
+
 module.exports = {
   createClaim,
   getClaimStatus,
@@ -667,5 +848,9 @@ module.exports = {
   rejectClaim,
   getRecentlyReturned,
   resubmitClaim,
+  updateClaim,
+  deleteClaim,
+  getAllClaims,
+  getUserClaims,
 };
 

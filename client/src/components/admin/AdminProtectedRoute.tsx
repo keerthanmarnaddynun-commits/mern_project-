@@ -1,14 +1,6 @@
-import React from 'react';
-import { Navigate } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import ProtectedRoute from '../ProtectedRoute';
 
-const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const adminToken = localStorage.getItem('adminToken');
-
-  if (!adminToken) {
-    return <Navigate to="/admin/login" replace />;
-  }
-
-  return <>{children}</>;
-};
-
-export default AdminProtectedRoute;
+export default function AdminProtectedRoute({ children }: { children: ReactNode }) {
+  return <ProtectedRoute allowedRoles={['admin']}>{children}</ProtectedRoute>;
+}

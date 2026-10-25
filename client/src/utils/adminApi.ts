@@ -2,10 +2,8 @@ const API_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/
 
 export const adminApi = {
   getHeaders: () => {
-    const token = localStorage.getItem('adminToken');
     return {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
     };
   },
 
@@ -13,6 +11,7 @@ export const adminApi = {
     const response = await fetch(`${API_URL}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ email, password }),
     });
     const data = await response.json();
@@ -20,9 +19,19 @@ export const adminApi = {
     return data;
   },
 
+  async logout() {
+    const rootApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+    const response = await fetch(`${rootApiUrl}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return response.ok;
+  },
+
   async getOverview() {
     const response = await fetch(`${API_URL}/overview`, {
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Failed to fetch overview');
@@ -32,6 +41,7 @@ export const adminApi = {
   async getClaims() {
     const response = await fetch(`${API_URL}/claims`, {
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Failed to fetch claims');
@@ -42,6 +52,7 @@ export const adminApi = {
     const response = await fetch(`${API_URL}/claims/${claimId}/approve`, {
       method: 'PATCH',
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Failed to approve claim');
@@ -52,6 +63,7 @@ export const adminApi = {
     const response = await fetch(`${API_URL}/claims/${claimId}/reject`, {
       method: 'PATCH',
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Failed to reject claim');
@@ -61,6 +73,7 @@ export const adminApi = {
   async getItems() {
     const response = await fetch(`${API_URL}/items`, {
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Failed to fetch items');
@@ -71,15 +84,29 @@ export const adminApi = {
     const response = await fetch(`${API_URL}/items/${itemId}/close-dispute`, {
       method: 'PATCH',
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Failed to close dispute');
     return data;
   },
 
+  async handoverItem(itemId: string, payload?: { challengerId?: string; recipientId?: string; verificationMethod?: string; verificationNotes?: string }) {
+    const response = await fetch(`${API_URL}/items/${itemId}/handover`, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      credentials: 'include',
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to handover item');
+    return data;
+  },
+
   async getActivity() {
     const response = await fetch(`${API_URL}/activity`, {
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Failed to fetch activity');
@@ -88,4 +115,3 @@ export const adminApi = {
 };
 
 export const closeDispute = (itemId: string) => adminApi.closeDispute(itemId);
-

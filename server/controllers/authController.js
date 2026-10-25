@@ -78,6 +78,13 @@ const registerUser = async (req, res) => {
       console.error('Activity log error:', logErr);
     }
 
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
     return res.status(201).json({
       token,
       user: toPublicUser(user),
@@ -117,6 +124,14 @@ const loginUser = async (req, res) => {
         process.env.JWT_SECRET,
         { expiresIn: '1d' }
       );
+
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      });
+
       return res.status(200).json({
         token,
         admin: {
@@ -141,6 +156,13 @@ const loginUser = async (req, res) => {
 
     const token = signToken(user._id);
 
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
     return res.status(200).json({
       token,
       user: toPublicUser(user),
@@ -151,7 +173,34 @@ const loginUser = async (req, res) => {
   }
 };
 
+const logoutUser = async (req, res) => {
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+  });
+  return res.status(200).json({ message: 'Logged out successfully' });
+};
+
+const getMe = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized, no session found' });
+    }
+    const publicUser = toPublicUser(req.user);
+    return res.status(200).json({
+      user: publicUser,
+      ...publicUser,
+    });
+  } catch (error) {
+    console.error('getMe error:', error);
+    return res.status(500).json({ message: 'Server error retrieving current user' });
+  }
+};
+
 module.exports = {
   registerUser,
   loginUser,
+  logoutUser,
+  getMe,
 };

@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminApi } from '../../utils/adminApi';
-import { getDisputes, resolveDispute, confirmReturn } from '../../services/api';
+import { getDisputes, resolveDispute, confirmReturn, handoverItem } from '../../services/api';
 import type { Dispute } from '../../types';
 import LogoutModal from '../../components/LogoutModal';
+import { useAuth } from '../../context/AuthContext';
 import {
   AlertTriangle,
   CheckCircle,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   XCircle,
   Eye,
+  Handshake,
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
@@ -34,6 +36,7 @@ const AdminDashboard = () => {
   } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const navigate = useNavigate();
+  const { signOut } = useAuth();
 
   const fetchDisputes = async () => {
     setDisputesLoading(true);
@@ -62,9 +65,13 @@ const AdminDashboard = () => {
     }
   }, [disputeNotification]);
 
-  const confirmLogout = () => {
-    localStorage.removeItem('adminToken');
-    navigate('/admin/login');
+  const confirmLogout = async () => {
+    try {
+      await signOut(navigate);
+    } catch {
+      const isAdminRoute = window.location.pathname.startsWith('/admin');
+      navigate(isAdminRoute ? '/admin/login' : '/login', { replace: true });
+    }
   };
 
   return (
@@ -206,6 +213,36 @@ const DisputesTab = ({
   const [adminNotes, setAdminNotes] = useState('');
   const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | null>(null);
   const [confirmReturnLoading, setConfirmReturnLoading] = useState<string | null>(null);
+  const [handoverLoading, setHandoverLoading] = useState<string | null>(null);
+
+  const handleHandoverItem = async (dispute: Dispute) => {
+    if (!dispute.itemId?._id) return;
+    const challengerId = dispute.challengerId?._id;
+    const recipientName = dispute.challengerId?.name || 'challenger';
+    const itemTitle = dispute.itemId?.title || 'item';
+
+    const confirmed = window.confirm(
+      `Confirm Final Handover:\n\nAre you sure you want to finalize handover of "${itemTitle}" to ${recipientName}? This will mark custody as returned and close the dispute lifecycle.`
+    );
+    if (!confirmed) return;
+
+    setHandoverLoading(dispute._id);
+    try {
+      await handoverItem(dispute.itemId._id, {
+        challengerId,
+        verificationMethod: 'Department Physical Handover (Admin Verified)',
+        verificationNotes: 'Handed over by Admin following dispute resolution.',
+      });
+      onNotification(`"${itemTitle}" successfully handed over to ${recipientName}!`, 'success');
+      handleCloseModal();
+      await onRefresh();
+    } catch (err: any) {
+      console.error('Failed to handover item:', err);
+      onNotification(err.response?.data?.message || err.message || 'Failed to handover item', 'error');
+    } finally {
+      setHandoverLoading(null);
+    }
+  };
 
   const handleConfirmReturn = async (disputeId: string, itemTitle: string) => {
     const confirmed = window.confirm(
@@ -507,9 +544,30 @@ const DisputesTab = ({
 
                         {(dispute.status === 'rejected' || dispute.status === 'resolved') && (
                           <div className="flex items-center justify-end gap-2">
-                            <span className="inline-flex items-center px-2.5 py-1 text-[11px] font-bold uppercase rounded-lg bg-gray-100 text-gray-500 border border-gray-200">
-                              Closed
-                            </span>
+                            {dispute.status === 'resolved' && dispute.itemId?.custodyStatus === 'ready_for_pickup' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleHandoverItem(dispute)}
+                                disabled={handoverLoading === dispute._id}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-all shadow-sm shadow-blue-200 disabled:opacity-50 active:scale-[0.98]"
+                              >
+                                {handoverLoading === dispute._id ? (
+                                  <>
+                                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    <span>Handing Over…</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Handshake className="w-3.5 h-3.5" />
+                                    <span>Handover Item</span>
+                                  </>
+                                )}
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center px-2.5 py-1 text-[11px] font-bold uppercase rounded-lg bg-gray-100 text-gray-500 border border-gray-200">
+                                {dispute.status === 'resolved' ? 'Returned / Closed' : 'Closed'}
+                              </span>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleOpenReview(dispute)}
@@ -746,8 +804,31 @@ const DisputesTab = ({
               )}
 
               {(selectedDispute.status === 'rejected' || selectedDispute.status === 'resolved') && (
-                <div className="text-xs text-gray-500 font-medium italic">
-                  Case is {selectedDispute.status === 'resolved' ? 'resolved' : 'rejected'} and concluded.
+                <div className="flex items-center justify-between gap-3 w-full sm:w-auto">
+                  {selectedDispute.status === 'resolved' && selectedDispute.itemId?.custodyStatus === 'ready_for_pickup' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleHandoverItem(selectedDispute)}
+                      disabled={handoverLoading === selectedDispute._id}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-md shadow-blue-200 disabled:opacity-50 active:scale-[0.98]"
+                    >
+                      {handoverLoading === selectedDispute._id ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Handing Over…</span>
+                        </>
+                      ) : (
+                        <>
+                          <Handshake className="w-4 h-4" />
+                          <span>Handover Item</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="text-xs text-gray-500 font-medium italic">
+                      Case is {selectedDispute.status === 'resolved' ? 'resolved' : 'rejected'} and concluded.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1422,6 +1503,7 @@ const ItemsTab = ({ refreshKey }: { refreshKey?: number }) => {
                 Reporter
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -1488,6 +1570,31 @@ const ItemsTab = ({ refreshKey }: { refreshKey?: number }) => {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {new Date(item.createdAt).toLocaleDateString()}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                  {item.custodyStatus === 'ready_for_pickup' && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const confirmed = window.confirm(
+                          `Confirm Handover:\n\nComplete final handover for "${item.title}" to the approved student? This will update custody status to returned.`
+                        );
+                        if (!confirmed) return;
+                        try {
+                          await adminApi.handoverItem(item._id);
+                          alert(`Handover completed successfully for "${item.title}".`);
+                          const updated = await adminApi.getItems();
+                          setItems(updated);
+                        } catch (err: any) {
+                          alert(err.message || 'Failed to complete handover');
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-all shadow-sm shadow-blue-200"
+                    >
+                      <Handshake className="w-3.5 h-3.5" />
+                      <span>Handover</span>
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

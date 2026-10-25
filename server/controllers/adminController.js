@@ -1,34 +1,76 @@
+const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Item = require('../models/Item');
 const Claim = require('../models/Claim');
 const Activity = require('../models/Activity');
+const Dispute = require('../models/Dispute');
 const { matchOppositePendingSameCategory } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 
 // POST /api/admin/login
 const loginAdmin = async (req, res) => {
-  const { email, password } = req.body;
-  const adminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-  const adminPassword = String(process.env.ADMIN_PASSWORD || '').trim();
-  const inputEmail = String(email || '').trim().toLowerCase();
-  const inputPassword = String(password || '').trim();
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
 
-  if (inputEmail === adminEmail && inputPassword === adminPassword && adminEmail !== '') {
+    const inputEmail = String(email).trim().toLowerCase();
+    const inputPassword = String(password).trim();
+
+    // 1. Query MongoDB users collection for user with role: 'admin'
+    const adminUser = await User.findOne({ email: inputEmail, role: 'admin' }).select('+password');
+
+    let isValid = false;
+    let verifiedEmail = inputEmail;
+
+    if (adminUser && adminUser.password) {
+      isValid = await bcrypt.compare(inputPassword, adminUser.password);
+      verifiedEmail = adminUser.email;
+    }
+
+    // 2. Fallback to environment variables if configured
+    if (!isValid) {
+      const envAdminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+      const envAdminPassword = String(process.env.ADMIN_PASSWORD || '').trim();
+
+      if (envAdminEmail && inputEmail === envAdminEmail && inputPassword === envAdminPassword) {
+        isValid = true;
+        verifiedEmail = envAdminEmail;
+      }
+    }
+
+    if (!isValid) {
+      return res.status(401).json({ message: 'Invalid admin credentials' });
+    }
+
     const token = jwt.sign(
-      { email: adminEmail, role: 'admin' },
+      { email: verifiedEmail, role: 'admin' },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
-    res.json({
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.status(200).json({
       token,
       admin: {
-        email,
-        role: 'admin'
-      }
+        email: verifiedEmail,
+        role: 'admin',
+        name: adminUser?.name || 'System Admin',
+      },
+      isAdmin: true,
     });
-  } else {
-    res.status(401).json({ message: 'Invalid admin credentials' });
+  } catch (error) {
+    console.error('loginAdmin error:', error);
+    return res.status(500).json({ message: 'Server error during admin login' });
   }
 };
 
@@ -78,6 +120,7 @@ const getClaims = async (req, res) => {
         path: 'lostItemId', // Lost item
         populate: { path: 'postedBy', select: 'name email' }
       })
+      .limit(100)
       .lean();
 
     // Sort by type (automatic first), then confidence, then oldest first
@@ -131,77 +174,184 @@ const getClaims = async (req, res) => {
 
 // PATCH /api/admin/claims/:claimId/approve
 const approveClaim = async (req, res) => {
-  try {
-    const claim = await Claim.findById(req.params.claimId)
-      .populate('claimant')
-      .populate('itemId')
-      .populate('lostItemId');
+  const { claimId } = req.params;
+  if (!claimId || !mongoose.Types.ObjectId.isValid(claimId)) {
+    return res.status(400).json({ message: 'Valid claim ID is required' });
+  }
 
-    if (!claim) return res.status(404).json({ message: 'Claim not found' });
-    if (claim.status !== 'pending') return res.status(400).json({ message: 'Claim is already ' + claim.status });
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const claim = await Claim.findById(claimId)
+      .populate('claimant', 'name email')
+      .populate('itemId')
+      .populate('lostItemId')
+      .session(session);
+
+    if (!claim) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    const isReadyForPickup = claim.itemId?.custodyStatus === 'ready_for_pickup';
+
+    if (!isReadyForPickup && claim.status !== 'pending') {
+      await session.abortTransaction();
+      return res.status(400).json({ message: 'Claim is already ' + claim.status });
+    }
+
+    if (isReadyForPickup) {
+      // 1. Query Dispute collection for the resolved dispute linked to this itemId
+      const dispute = await Dispute.findOne({
+        itemId: claim.itemId._id,
+        status: { $in: ['resolved', 'ready_for_pickup'] },
+      }).sort({ updatedAt: -1 }).session(session);
+
+      const originalOwnerId = dispute?.currentOwnerId;
+
+      // 2. Revoke original incorrect claim
+      let incorrectClaim = null;
+      if (originalOwnerId) {
+        incorrectClaim = await Claim.findOne({
+          itemId: claim.itemId._id,
+          claimant: originalOwnerId,
+        }).session(session);
+      }
+      if (!incorrectClaim) {
+        incorrectClaim = await Claim.findOne({
+          itemId: claim.itemId._id,
+          _id: { $ne: claim._id },
+          status: 'approved',
+        }).session(session);
+      }
+
+      if (incorrectClaim) {
+        incorrectClaim.status = 'revoked';
+        incorrectClaim.reason = 'Claim revoked following dispute resolution and handover to rightful owner.';
+        await incorrectClaim.save({ session });
+      }
+
+      // 3. Approve challenger's claim
+      claim.status = 'approved';
+      await claim.save({ session });
+
+      // 4. Update items
+      claim.itemId.status = 'resolved';
+      claim.itemId.is_resolved = true;
+      claim.itemId.custodyStatus = 'returned';
+      claim.itemId.handoverDate = new Date();
+      await claim.itemId.save({ session });
+
+      if (claim.lostItemId) {
+        claim.lostItemId.status = 'resolved';
+        claim.lostItemId.is_resolved = true;
+        await claim.lostItemId.save({ session });
+      }
+
+      // Log Activity (type: 'handover_completed')
+      await Activity.create([
+        {
+          type: 'handover_completed',
+          message: `Admin completed final handover for item "${claim.itemId.title}" to rightful owner ${claim.claimant?.name || 'claimant'}.`,
+          actorName: 'Admin',
+          actorEmail: req.admin?.email,
+          itemTitle: claim.itemId.title,
+          relatedItemTitle: claim.lostItemId ? claim.lostItemId.title : null,
+          claimId: claim._id,
+          itemId: claim.itemId._id,
+          userId: claim.claimant?._id || claim.claimant,
+          metadata: {
+            disputeId: dispute?._id || null,
+            challengerId: claim.claimant?._id || claim.claimant,
+            revokedClaimOwnerId: originalOwnerId || null,
+            custodyStatus: 'returned',
+          },
+        }
+      ], { session });
+
+      await session.commitTransaction();
+
+      return res.json({
+        message: 'Recovered item handed over to rightful owner successfully',
+        approvedClaim: claim,
+        revokedClaim: incorrectClaim,
+      });
+    }
 
     // Approve claim
     claim.status = 'approved';
-    await claim.save();
+    await claim.save({ session });
 
     // Mark items as resolved
     await Item.findByIdAndUpdate(claim.itemId._id, {
       status: 'resolved',
       is_resolved: true,
       custodyStatus: 'returned',
-    });
-    await Item.findByIdAndUpdate(claim.lostItemId._id, { status: 'resolved', is_resolved: true });
+    }, { session });
+
+    if (claim.lostItemId) {
+      await Item.findByIdAndUpdate(claim.lostItemId._id, {
+        status: 'resolved',
+        is_resolved: true,
+      }, { session });
+    }
 
     // Auto-reject other claims for the same found item
     const otherClaims = await Claim.updateMany(
       { itemId: claim.itemId._id, _id: { $ne: claim._id }, status: 'pending' },
-      { $set: { status: 'rejected' } }
+      { $set: { status: 'rejected' } },
+      { session }
     );
 
     // Logging Activity
-    try {
-      await Activity.create({
+    const activitiesToLog = [
+      {
         type: 'claim_approved',
-        message: `Admin approved claim for found item "${claim.itemId.title}" using lost item "${claim.lostItemId.title}"`,
+        message: `Admin approved claim for found item "${claim.itemId.title}" using lost item "${claim.lostItemId?.title || ''}"`,
         actorName: 'Admin',
-        actorEmail: req.admin.email,
+        actorEmail: req.admin?.email,
         itemTitle: claim.itemId.title,
-        relatedItemTitle: claim.lostItemId.title,
+        relatedItemTitle: claim.lostItemId?.title || null,
         claimId: claim._id,
         itemId: claim.itemId._id,
-      });
-
-      await Activity.create({
+      },
+      {
         type: 'item_resolved',
-        message: `Items "${claim.itemId.title}" and "${claim.lostItemId.title}" marked as resolved.`,
+        message: `Items "${claim.itemId.title}" and "${claim.lostItemId?.title || ''}" marked as resolved.`,
         actorName: 'Admin',
-        actorEmail: req.admin.email,
+        actorEmail: req.admin?.email,
         metadata: {
           category: claim.itemId.category || null,
-          keyword: extractKeyword(claim.itemId.title)
-        }
-      });
-
-      if (otherClaims.modifiedCount > 0) {
-        await Activity.create({
-          type: 'claim_auto_rejected',
-          message: `${otherClaims.modifiedCount} other claim(s) for "${claim.itemId.title}" were automatically rejected.`,
-          actorName: 'System',
-          itemId: claim.itemId._id,
-        });
+          keyword: extractKeyword(claim.itemId.title),
+        },
       }
-    } catch (logErr) {
-      console.error('Activity log error (approve claim):', logErr);
+    ];
+
+    if (otherClaims.modifiedCount > 0) {
+      activitiesToLog.push({
+        type: 'claim_auto_rejected',
+        message: `${otherClaims.modifiedCount} other claim(s) for "${claim.itemId.title}" were automatically rejected.`,
+        actorName: 'System',
+        itemId: claim.itemId._id,
+      });
     }
 
-    res.json({
+    await Activity.create(activitiesToLog, { session });
+
+    await session.commitTransaction();
+
+    return res.json({
       message: 'Claim approved successfully',
       approvedClaim: claim,
-      autoRejectedCount: otherClaims.modifiedCount || 0
+      autoRejectedCount: otherClaims.modifiedCount || 0,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error approving claim' });
+    await session.abortTransaction();
+    console.error('admin approveClaim error:', error);
+    return res.status(500).json({ message: 'Server error approving claim', error: error.message });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -244,6 +394,7 @@ const getAllItems = async (req, res) => {
     const items = await Item.find()
       .sort({ createdAt: -1 })
       .populate('postedBy', 'name email')
+      .limit(100)
       .lean();
 
     const itemIds = items.map((i) => i._id);
@@ -315,7 +466,8 @@ const closeDispute = async (req, res) => {
 // GET /api/admin/activity
 const getActivity = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 50;
+    const requestedLimit = parseInt(req.query.limit) || 50;
+    const limit = Math.min(Math.max(requestedLimit, 1), 100);
     const activities = await Activity.find()
       .sort({ createdAt: -1 })
       .limit(limit);

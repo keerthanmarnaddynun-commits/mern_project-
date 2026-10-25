@@ -11,6 +11,7 @@ const {
   getActivity,
   closeDispute,
 } = require('../controllers/adminController');
+const { handoverItem } = require('../controllers/itemController');
 
 // Public admin route
 router.post('/login', loginAdmin);
@@ -21,6 +22,7 @@ router.get('/claims', protectAdmin, getClaims);
 router.patch('/claims/:claimId/approve', protectAdmin, approveClaim);
 router.patch('/claims/:claimId/reject', protectAdmin, rejectClaim);
 router.get('/items', protectAdmin, getAllItems);
+router.patch('/items/:id/handover', protectAdmin, handoverItem);
 router.patch('/items/:id/close-dispute', protectAdmin, closeDispute);
 router.get('/activity', protectAdmin, getActivity);
 

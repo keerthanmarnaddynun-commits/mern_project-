@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminProtectedRoute from './components/admin/AdminProtectedRoute';
 import Login from './pages/Login';
@@ -15,19 +15,56 @@ import CommunityActivityPage from './pages/CommunityActivityPage';
 import FacultyProtectedRoute from './components/FacultyProtectedRoute';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 
+function RootRedirect() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user.role === 'admin') {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+
+  if (user.role === 'faculty') {
+    return <Navigate to="/faculty-dashboard" replace />;
+  }
+
+  return <Navigate to="/dashboard" replace />;
+}
+
 function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* Root dynamic redirect based on role */}
+          <Route path="/" element={<RootRedirect />} />
+
           {/* Admin Routes */}
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route
+            path="/admin/dashboard"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/admin/*"
             element={
-              <AdminProtectedRoute>
+              <ProtectedRoute allowedRoles={['admin']}>
                 <AdminDashboard />
-              </AdminProtectedRoute>
+              </ProtectedRoute>
             }
           />
 
@@ -37,7 +74,7 @@ function App() {
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute allowedRoles={['user', 'faculty']}>
                 <Dashboard />
               </ProtectedRoute>
             }
@@ -89,12 +126,12 @@ function App() {
           <Route
             path="/faculty-dashboard"
             element={
-              <FacultyProtectedRoute>
+              <ProtectedRoute allowedRoles={['faculty', 'admin']}>
                 <FacultyDashboard />
-              </FacultyProtectedRoute>
+              </ProtectedRoute>
             }
           />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<RootRedirect />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

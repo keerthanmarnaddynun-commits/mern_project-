@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
-import { fetchItemById, deleteItem, getSimilarItems, createClaim, getClaimStatus, updateItem, getMyReports, createManualClaim, disputeItemHandover, resubmitClaim, submitDispute } from '../services/api';
+import { fetchItemById, deleteItem, getSimilarItems, createClaim, getClaimStatus, updateItem, getMyReports, createManualClaim, disputeItemHandover, resubmitClaim, submitDispute, handoverItem } from '../services/api';
 import type { ClaimStatusResponse, Item, SimilarItemMatch } from '../types';
 import { CATEGORIES } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -88,6 +88,48 @@ export default function ItemDetails() {
   const [disputeLoading, setDisputeLoading] = useState(false);
   const [disputeError, setDisputeError] = useState('');
   const [disputeSuccessMsg, setDisputeSuccessMsg] = useState('');
+
+  // Handover State for ready_for_pickup items
+  const [showHandoverModal, setShowHandoverModal] = useState(false);
+  const [handoverLoading, setHandoverLoading] = useState(false);
+  const [handoverError, setHandoverError] = useState('');
+  const [handoverNotes, setHandoverNotes] = useState('');
+  const [handoverVerificationMethod, setHandoverVerificationMethod] = useState('Physical ID / University ID Verification');
+  const [handoverSuccessMsg, setHandoverSuccessMsg] = useState('');
+
+  const isAdminOrFaculty = Boolean(
+    user?.role === 'faculty' || user?.role === 'admin'
+  );
+
+  const handleConfirmHandover = async () => {
+    if (!item) return;
+    setHandoverLoading(true);
+    setHandoverError('');
+    try {
+      const challengerIdToPass =
+        item.dispute?.challengerId?._id ||
+        (typeof item.dispute?.challengerId === 'string' ? item.dispute.challengerId : undefined);
+
+      await handoverItem(item._id, {
+        challengerId: challengerIdToPass,
+        verificationMethod: handoverVerificationMethod,
+        verificationNotes: handoverNotes.trim() || 'Physical handover verified by department.',
+      });
+
+      setHandoverSuccessMsg('Item handover completed successfully! Custody marked as returned.');
+      setShowHandoverModal(false);
+      setHandoverNotes('');
+      // Refresh item state to reflect returned
+      const refreshedItem = await fetchItemById(item._id);
+      if (refreshedItem) {
+        setItem(refreshedItem);
+      }
+    } catch (err: any) {
+      setHandoverError(err?.response?.data?.message || err.message || 'Failed to complete handover.');
+    } finally {
+      setHandoverLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -282,9 +324,7 @@ export default function ItemDetails() {
 
   const handleClaim = async () => {
     if (!item) return;
-    setClaimError('');
-    const token = localStorage.getItem('token');
-    if (!user || !token) {
+    if (!user) {
       navigate('/login', {
         replace: false,
         state: { sessionMessage: 'Please sign in to submit a claim.' },
@@ -328,7 +368,7 @@ export default function ItemDetails() {
       }
     } finally {
       setClaimSubmitting(false);
-      if (item?.type === 'found' && user && localStorage.getItem('token')) {
+      if (item?.type === 'found' && user) {
         try {
           const s = await getClaimStatus(item._id);
           setClaimStatus(s);
@@ -576,7 +616,11 @@ export default function ItemDetails() {
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                   {targetItem.category}
                 </span>
-                {targetItem.status === 'pending' ? (
+                {targetItem.custodyStatus === 'ready_for_pickup' ? (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-blue-100 text-blue-800 border border-blue-300 animate-pulse">
+                    📦 Ready for Pickup
+                  </span>
+                ) : targetItem.status === 'pending' ? (
                   <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide bg-amber-100 text-amber-700">
                     Status: Active
                   </span>
@@ -624,7 +668,40 @@ export default function ItemDetails() {
             {!targetIsLost && (
               <div className="border-t border-gray-100 pt-6 mb-6">
                 <h3 className="text-sm font-semibold text-gray-900 mb-3">Item Custody Details</h3>
-                {targetItem?.custodyStatus === 'awaiting_confirmation' ? (
+                {targetItem?.custodyStatus === 'ready_for_pickup' ? (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                        Ready for Pickup
+                      </span>
+                      <span className="text-xs text-blue-700 font-medium">Dispute Resolved • Recovered Item</span>
+                    </div>
+                    <p className="text-sm text-blue-950 font-medium">
+                      This recovered item is at the department desk and is ready for pickup by the approved recipient{targetItem.dispute?.challengerId?.name ? ` (${targetItem.dispute.challengerId.name})` : ''}.
+                    </p>
+                    {targetItem.dispute?.challengerId && (
+                      <div className="bg-white/80 border border-blue-100 rounded-lg p-2.5 text-xs text-blue-900 space-y-1">
+                        <p><span className="font-semibold">Approved Recipient:</span> {targetItem.dispute.challengerId.name}</p>
+                        <p><span className="font-semibold">Email:</span> {targetItem.dispute.challengerId.email}</p>
+                      </div>
+                    )}
+                    {isAdminOrFaculty && (
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHandoverError('');
+                            setShowHandoverModal(true);
+                          }}
+                          className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl transition-all shadow-md shadow-emerald-100 active:scale-[0.98]"
+                        >
+                          <Handshake className="w-4 h-4" />
+                          <span>Handover Item</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : targetItem?.custodyStatus === 'awaiting_confirmation' ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-2">
                     <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
                       Awaiting Confirmation
@@ -1118,6 +1195,21 @@ export default function ItemDetails() {
             </div>
             <button
               onClick={() => setDisputeSuccessMsg('')}
+              className="text-xs text-emerald-700 hover:text-emerald-900 font-bold px-2 py-0.5"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {handoverSuccessMsg && (
+          <div className="mb-4 flex items-center justify-between gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-sm font-medium">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+              <span>{handoverSuccessMsg}</span>
+            </div>
+            <button
+              onClick={() => setHandoverSuccessMsg('')}
               className="text-xs text-emerald-700 hover:text-emerald-900 font-bold px-2 py-0.5"
             >
               Dismiss
@@ -1718,6 +1810,108 @@ export default function ItemDetails() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {showHandoverModal && item && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-gray-100 my-8">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-emerald-50/70">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <Handshake className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">Final Handover to Student</h3>
+                  <p className="text-xs text-gray-500">Confirm handover of recovered item to the rightful owner.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHandoverModal(false)}
+                disabled={handoverLoading}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-xl hover:bg-gray-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {handoverError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs">
+                  {handoverError}
+                </div>
+              )}
+
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2 text-xs">
+                <div className="font-bold text-gray-700 uppercase tracking-wider text-[11px]">Item Details</div>
+                <div className="font-semibold text-gray-900 text-sm">{item.title}</div>
+                <div className="text-gray-500">{item.category} • {item.location}</div>
+              </div>
+
+              {item.dispute?.challengerId && (
+                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2 text-xs">
+                  <div className="font-bold text-blue-900 uppercase tracking-wider text-[11px]">Approved Recipient (Challenger)</div>
+                  <div className="font-semibold text-blue-950 text-sm">{item.dispute.challengerId.name}</div>
+                  <div className="text-blue-700">{item.dispute.challengerId.email}</div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Verification Method</label>
+                <input
+                  type="text"
+                  value={handoverVerificationMethod}
+                  onChange={(e) => setHandoverVerificationMethod(e.target.value)}
+                  placeholder="e.g. University ID Card Verification, Photo ID"
+                  className="w-full px-3.5 py-2 text-xs border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Handover Notes</label>
+                <textarea
+                  rows={2}
+                  value={handoverNotes}
+                  onChange={(e) => setHandoverNotes(e.target.value)}
+                  placeholder="e.g. Student presented valid ID, item physically returned in good condition."
+                  className="w-full px-3.5 py-2 text-xs border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowHandoverModal(false)}
+                  disabled={handoverLoading}
+                  className="px-4 py-2 border border-gray-200 text-gray-700 text-xs font-semibold rounded-xl hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmHandover}
+                  disabled={handoverLoading}
+                  className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-100 disabled:opacity-50"
+                >
+                  {handoverLoading ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>Confirm &amp; Handover</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

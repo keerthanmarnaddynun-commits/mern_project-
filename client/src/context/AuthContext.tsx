@@ -9,32 +9,13 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; isAdmin?: boolean; token?: string }>;
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
-  signOut: () => Promise<void>;
+  signOut: (navigateFn?: (path: string, options?: { replace?: boolean }) => void) => Promise<void>;
   updateUser: (user: User) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function isUserShape(value: unknown): value is User {
-  if (!value || typeof value !== 'object') return false;
-  const o = value as Record<string, unknown>;
-  return (
-    typeof o._id === 'string' &&
-    typeof o.name === 'string' &&
-    typeof o.email === 'string'
-  );
-}
 
-function parseStoredUser(raw: string | null): User | null {
-  if (!raw) return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (isUserShape(parsed)) return parsed;
-  } catch {
-    /* invalid JSON */
-  }
-  return null;
-}
 
 function normalizeUser(nextUser: unknown): User | null {
   if (!nextUser || typeof nextUser !== 'object') return null;
@@ -42,7 +23,7 @@ function normalizeUser(nextUser: unknown): User | null {
   const _id = o._id != null ? String(o._id) : '';
   const name = o.name != null ? String(o.name) : '';
   const email = o.email != null ? String(o.email) : '';
-  const role = o.role === 'faculty' ? 'faculty' : (o.role === 'user' ? 'user' : undefined);
+  const role = o.role === 'admin' ? 'admin' : (o.role === 'faculty' ? 'faculty' : (o.role === 'user' ? 'user' : undefined));
   const department = typeof o.department === 'string' ? o.department : undefined;
   if (!_id || !email) return null;
   return { _id, name, email, role, department };
@@ -61,41 +42,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Hydrate user session on mount via HttpOnly cookie using /me endpoint
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const storedUser = parseStoredUser(localStorage.getItem('user'));
-    if (token && storedUser) {
-      setUser(storedUser);
-    } else {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-    }
-    setLoading(false);
-  }, []);
+    let isMounted = true;
 
-  const persistSession = (token: string, nextUser: User) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(nextUser));
-    setUser(nextUser);
-  };
+    const fetchCurrentUser = async () => {
+      try {
+        const { data } = await API.get<{ user?: unknown }>('/auth/me');
+        const nextUser = normalizeUser(data.user || data);
+        if (isMounted) {
+          setUser(nextUser);
+        }
+      } catch {
+        if (isMounted) {
+          setUser(null);
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchCurrentUser();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const login = async (email: string, password: string) => {
     try {
-      const { data } = await API.post<{ token: string; user?: unknown; admin?: unknown; isAdmin?: boolean }>('/auth/login', {
+      const { data } = await API.post<{ token?: string; user?: unknown; admin?: unknown; isAdmin?: boolean }>('/auth/login', {
         email,
         password,
       });
 
       if (data.isAdmin) {
+        // Fetch session profile via /me
+        try {
+          const meRes = await API.get<{ user?: unknown }>('/auth/me');
+          const meUser = normalizeUser(meRes.data.user || meRes.data);
+          if (meUser) {
+            setUser(meUser);
+            return { success: true, isAdmin: true, token: data.token };
+          }
+        } catch {
+          // fallback admin state
+        }
+        const adminUser: User = {
+          _id: '000000000000000000000000',
+          name: 'System Admin',
+          email,
+          role: 'admin',
+        };
+        setUser(adminUser);
         return { success: true, isAdmin: true, token: data.token };
       }
 
-      const { token, user: rawUser } = data;
-      const nextUser = normalizeUser(rawUser);
-      if (!token || !nextUser) {
-        throw new Error('Invalid response from server');
+      // Immediately call /me to fetch verified authenticated user profile
+      const meRes = await API.get<{ user?: unknown }>('/auth/me');
+      const nextUser = normalizeUser(meRes.data.user || meRes.data) || normalizeUser(data.user);
+      if (!nextUser) {
+        throw new Error('Failed to retrieve user profile after login');
       }
-      persistSession(token, nextUser);
+      setUser(nextUser);
       return { success: true, isAdmin: false };
     } catch (error) {
       throw toAuthError(error, 'Login failed');
@@ -104,33 +115,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, fullName: string) => {
     try {
-      const { data } = await API.post<{ token: string; user: unknown }>('/auth/register', {
+      const { data } = await API.post<{ token?: string; user?: unknown }>('/auth/register', {
         name: fullName,
         email,
         password,
       });
-      const { token, user: rawUser } = data;
-      const nextUser = normalizeUser(rawUser);
-      if (!token || !nextUser) {
-        throw new Error('Invalid response from server');
+      // Hydrate via /me
+      try {
+        const meRes = await API.get<{ user?: unknown }>('/auth/me');
+        const nextUser = normalizeUser(meRes.data.user || meRes.data) || normalizeUser(data.user);
+        if (nextUser) {
+          setUser(nextUser);
+          return;
+        }
+      } catch {
+        // fallback
       }
-      persistSession(token, nextUser);
+      const nextUser = normalizeUser(data.user);
+      if (nextUser) {
+        setUser(nextUser);
+      }
     } catch (error) {
       throw toAuthError(error, 'Registration failed');
     }
   };
 
-  const signOut = async () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setUser(null);
+  const signOut = async (navigateFn?: (path: string, options?: { replace?: boolean }) => void) => {
+    try {
+      await API.post('/auth/logout');
+    } catch {
+      // Ignore network errors during signout
+    } finally {
+      setUser(null);
+      if (navigateFn) {
+        const isAdminRoute = window.location.pathname.startsWith('/admin');
+        navigateFn(isAdminRoute ? '/admin/login' : '/login', { replace: true });
+      }
+    }
   };
 
   const updateUser = (updatedUser: User) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      persistSession(token, updatedUser);
-    }
+    setUser(updatedUser);
   };
 
   return (

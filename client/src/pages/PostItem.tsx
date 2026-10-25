@@ -66,8 +66,7 @@ export default function PostItem() {
     e.preventDefault();
     setError('');
 
-    const token = localStorage.getItem('token');
-    if (!user || !token) {
+    if (!user) {
       navigate('/login', {
         replace: true,
         state: { sessionMessage: 'You must be signed in to post an item.' },

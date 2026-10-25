@@ -26,6 +26,7 @@ export interface Item {
   isDisputed?: boolean;
   disputeReason?: string | null;
   disputeProofUrl?: string | null;
+  dispute?: Dispute | null;
   createdAt: string;
   updatedAt?: string;
 }
@@ -58,7 +59,7 @@ export interface User {
   _id: string;
   name: string;
   email: string;
-  role?: 'user' | 'faculty';
+  role?: 'user' | 'faculty' | 'admin';
   department?: string;
 }
 

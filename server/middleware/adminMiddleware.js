@@ -1,13 +1,14 @@
 const jwt = require('jsonwebtoken');
 
 const protectAdmin = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  let token = null;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Not authorized, no token' });
+  if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7).trim();
   }
 
-  const token = authHeader.slice(7).trim();
   if (!token) {
     return res.status(401).json({ message: 'Not authorized, no token' });
   }

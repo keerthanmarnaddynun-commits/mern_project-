@@ -3,14 +3,9 @@ import type { ClaimStatusResponse, Dispute, Item, SimilarItemsResponse, User } f
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-const API = axios.create({ baseURL: API_BASE_URL });
-
-API.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
+const API = axios.create({
+  baseURL: API_BASE_URL,
+  withCredentials: true,
 });
 
 export default API;
@@ -199,6 +194,20 @@ export const getUserNotifications = async () => {
   const { data } = await API.get('/notifications');
   return Array.isArray(data) ? data : [];
 };
+
+export const handoverItem = async (
+  itemId: string,
+  payload?: {
+    challengerId?: string;
+    recipientId?: string;
+    verificationMethod?: string;
+    verificationNotes?: string;
+  }
+) => {
+  const { data } = await API.patch(`/items/${itemId}/handover`, payload || {});
+  return data;
+};
+
 
 
 

@@ -1,7 +1,9 @@
+const mongoose = require('mongoose');
 const Item = require('../models/Item');
 const Activity = require('../models/Activity');
 const Dispute = require('../models/Dispute');
 const Claim = require('../models/Claim');
+const Notification = require('../models/Notification');
 const { matchOppositePendingSameCategory, confidenceRank } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 
@@ -26,7 +28,7 @@ const getItems = async (req, res) => {
       query.type = status;
     }
 
-    const items = await Item.find(query).sort({ createdAt: -1 });
+    const items = await Item.find(query).sort({ createdAt: -1 }).limit(100);
     res.status(200).json(items);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -35,12 +37,14 @@ const getItems = async (req, res) => {
 
 const getMyReports = async (req, res) => {
   try {
-    const items = await Item.find({ postedBy: req.user._id }).sort({ createdAt: -1 });
+    const items = await Item.find({ postedBy: req.user._id }).sort({ createdAt: -1 }).limit(100);
     res.status(200).json(items);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
+const getAllItems = getItems;
 
 const getItemById = async (req, res) => {
   try {
@@ -49,7 +53,25 @@ const getItemById = async (req, res) => {
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
     }
-    res.status(200).json(item);
+    const itemObj = item.toObject();
+    if (
+      item.custodyStatus === 'ready_for_pickup' ||
+      item.custodyStatus === 'recall_pending' ||
+      item.isDisputed
+    ) {
+      const dispute = await Dispute.findOne({
+        itemId: item._id,
+        status: { $in: ['resolved', 'ready_for_pickup', 'recall_pending', 'pending'] },
+      })
+        .populate('challengerId', 'name email')
+        .populate('currentOwnerId', 'name email')
+        .sort({ updatedAt: -1 });
+
+      if (dispute) {
+        itemObj.dispute = dispute;
+      }
+    }
+    res.status(200).json(itemObj);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -93,6 +115,8 @@ const createItem = async (req, res) => {
       normalizedCustodyLocation
     );
 
+    const resolvedImageUrl = req.file ? `/uploads/${req.file.filename}` : (image_url || null);
+
     const newItem = new Item({
       title,
       description,
@@ -100,7 +124,7 @@ const createItem = async (req, res) => {
       type,
       location,
       date_occurred,
-      image_url: image_url || null,
+      image_url: resolvedImageUrl,
       contact_email,
       contact_phone: contact_phone || null,
       postedBy,
@@ -198,8 +222,11 @@ const updateItem = async (req, res) => {
       return res.status(404).json({ message: 'Item not found' });
     }
 
-    if (item.postedBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Not authorized to update this item' });
+    const isOwner =
+      (item.postedBy && item.postedBy.toString() === req.user._id.toString()) ||
+      (item.reporter && item.reporter.toString() === req.user._id.toString());
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to modify this record' });
     }
 
     let isModified = false;
@@ -254,8 +281,11 @@ const deleteItem = async (req, res) => {
       return res.status(404).json({ message: 'Item not found' });
     }
 
-    if (item.postedBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Not authorized to delete this item' });
+    const isOwner =
+      (item.postedBy && item.postedBy.toString() === req.user._id.toString()) ||
+      (item.reporter && item.reporter.toString() === req.user._id.toString());
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to modify this record' });
     }
 
     await item.deleteOne();
@@ -457,6 +487,178 @@ const disputeItemHandover = async (req, res) => {
   }
 };
 
+const handoverItem = async (req, res) => {
+  const { id } = req.params;
+  const { challengerId, recipientId, verificationMethod, verificationNotes } = req.body || {};
+
+  if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: 'Valid item ID is required' });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const item = await Item.findById(id).session(session);
+    if (!item) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    const actorName = req.user?.name || req.admin?.email || 'Administrator';
+    const actorEmail = req.user?.email || req.admin?.email || 'admin@system.local';
+
+    if (item.custodyStatus === 'ready_for_pickup') {
+      // 1. Database Cleanup: Query Dispute for the resolved dispute linked to this itemId
+      const dispute = await Dispute.findOne({
+        itemId: item._id,
+        status: { $in: ['resolved', 'ready_for_pickup'] },
+      }).sort({ updatedAt: -1 }).session(session);
+
+      const finalChallengerId = challengerId || recipientId || dispute?.challengerId;
+      const originalOwnerId = dispute?.currentOwnerId;
+
+      // 2. Find original incorrect claim and revoke it
+      let incorrectClaim = null;
+      if (originalOwnerId) {
+        incorrectClaim = await Claim.findOne({
+          itemId: item._id,
+          claimant: originalOwnerId,
+        }).session(session);
+      }
+      if (!incorrectClaim) {
+        incorrectClaim = await Claim.findOne({
+          itemId: item._id,
+          status: 'approved',
+        }).session(session);
+      }
+
+      if (incorrectClaim) {
+        incorrectClaim.status = 'revoked';
+        incorrectClaim.reason = 'Claim revoked following dispute resolution and handover to rightful owner.';
+        await incorrectClaim.save({ session });
+      }
+
+      // 3. Find challenger's claim and approve it
+      let challengerClaim = null;
+      if (finalChallengerId) {
+        challengerClaim = await Claim.findOne({
+          itemId: item._id,
+          claimant: finalChallengerId,
+        }).session(session);
+      }
+
+      if (challengerClaim) {
+        challengerClaim.status = 'approved';
+        if (verificationMethod) {
+          challengerClaim.verificationMethod = verificationMethod.toString().trim();
+        }
+        if (verificationNotes) {
+          challengerClaim.verificationNotes = verificationNotes.toString().trim();
+        }
+        await challengerClaim.save({ session });
+
+        if (challengerClaim.lostItemId) {
+          await Item.findByIdAndUpdate(challengerClaim.lostItemId, {
+            status: 'resolved',
+            is_resolved: true,
+          }, { session });
+        }
+      }
+
+      // 4. Set item custodyStatus = 'returned'
+      item.custodyStatus = 'returned';
+      item.status = 'resolved';
+      item.is_resolved = true;
+      item.handoverDate = new Date();
+      if (verificationNotes) {
+        item.handoverNotes = verificationNotes.toString().trim();
+      }
+      await item.save({ session });
+
+      // 5. Log Activity using session
+      await Activity.create([
+        {
+          type: 'handover_completed',
+          message: `Final handover completed for item "${item.title}". Handed over to rightful owner after dispute resolution.`,
+          actorName,
+          actorEmail,
+          itemTitle: item.title,
+          itemId: item._id,
+          claimId: challengerClaim?._id || null,
+          userId: finalChallengerId || null,
+          metadata: {
+            disputeId: dispute?._id || null,
+            challengerId: finalChallengerId || null,
+            revokedClaimOwnerId: originalOwnerId || null,
+            custodyStatus: 'returned',
+            verificationMethod: verificationMethod || null,
+            verificationNotes: verificationNotes || null,
+          },
+        }
+      ], { session });
+
+      // 6. Notification for challenger using session
+      if (finalChallengerId) {
+        await Notification.create([
+          {
+            userId: finalChallengerId,
+            message: `Your recovered item "${item.title}" has been successfully handed over to you.`,
+            type: 'handover_completed',
+            priority: 'high',
+            itemId: item._id,
+            itemTitle: item.title,
+          }
+        ], { session });
+      }
+
+      await session.commitTransaction();
+
+      return res.status(200).json({
+        message: 'Recovered item successfully handed over to rightful owner.',
+        item,
+        approvedClaim: challengerClaim,
+        revokedClaim: incorrectClaim,
+      });
+    }
+
+    // Standard handover logic for items that are just pending and have never been disputed
+    item.custodyStatus = 'returned';
+    item.status = 'resolved';
+    item.is_resolved = true;
+    item.handoverDate = new Date();
+    if (verificationNotes) {
+      item.handoverNotes = verificationNotes.toString().trim();
+    }
+    await item.save({ session });
+
+    await Activity.create([
+      {
+        type: 'handover_completed',
+        message: `Handover completed for item "${item.title}".`,
+        actorName,
+        actorEmail,
+        itemTitle: item.title,
+        itemId: item._id,
+        userId: req.user?._id || null,
+      }
+    ], { session });
+
+    await session.commitTransaction();
+
+    return res.status(200).json({
+      message: 'Item handover completed successfully.',
+      item,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('handoverItem error:', error);
+    return res.status(500).json({ message: 'Server error processing handover', error: error.message });
+  } finally {
+    session.endSession();
+  }
+};
+
 module.exports = {
   getItems,
   getMyReports,
@@ -468,4 +670,6 @@ module.exports = {
   confirmItemReceipt,
   denyItemReceipt,
   disputeItemHandover,
+  handoverItem,
+  getAllItems,
 };
