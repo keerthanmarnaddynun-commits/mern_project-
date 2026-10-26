@@ -206,7 +206,30 @@ export default function PostItem() {
           <p className="text-gray-500 text-sm">Fill in the details below to post a lost or found item</p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
+        <div className="relative bg-white rounded-2xl border border-gray-100 shadow-sm p-8 overflow-hidden">
+          {user && !user.isVerified && user.role !== 'admin' && (
+            <div className="absolute inset-0 z-20 backdrop-blur-[4px] bg-white/75 flex items-center justify-center p-6">
+              <div className="max-w-md w-full bg-white border border-amber-200 rounded-2xl shadow-xl p-6 text-center space-y-4">
+                <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto border border-amber-200 text-amber-600">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <h2 className="text-xl font-bold text-gray-900">Email Verification Required</h2>
+                <p className="text-sm text-gray-600">
+                  You must verify your college email address before reporting lost or found items on campus.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/profile')}
+                    className="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl text-sm transition-colors shadow-sm cursor-pointer"
+                  >
+                    Go to Profile to Verify
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-6 flex items-center gap-2.5 p-3.5 bg-red-50 border border-red-100 rounded-xl text-red-700 text-sm">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />

@@ -1,10 +1,17 @@
+import { getCsrfTokenFromCookie } from '../services/api';
+
 const API_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/admin`;
 
 export const adminApi = {
   getHeaders: () => {
-    return {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
+    const csrfToken = getCsrfTokenFromCookie();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+    return headers;
   },
 
   async login(email: string, password: string) {
@@ -23,6 +30,7 @@ export const adminApi = {
     const rootApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
     const response = await fetch(`${rootApiUrl}/auth/logout`, {
       method: 'POST',
+      headers: this.getHeaders(),
       credentials: 'include',
     });
     return response.ok;

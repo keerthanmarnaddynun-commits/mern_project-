@@ -25,8 +25,10 @@ function normalizeUser(nextUser: unknown): User | null {
   const email = o.email != null ? String(o.email) : '';
   const role = o.role === 'admin' ? 'admin' : (o.role === 'faculty' ? 'faculty' : (o.role === 'user' ? 'user' : undefined));
   const department = typeof o.department === 'string' ? o.department : undefined;
+  const isVerified = Boolean(o.isVerified);
+  const pendingEmail = typeof o.pendingEmail === 'string' ? o.pendingEmail : undefined;
   if (!_id || !email) return null;
-  return { _id, name, email, role, department };
+  return { _id, name, email, role, department, isVerified, pendingEmail };
 }
 
 function toAuthError(error: unknown, fallback: string): Error {
@@ -42,32 +44,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const fetchCurrentUser = async () => {
+    try {
+      const { data } = await API.get<{ user?: unknown }>('/auth/me');
+      const nextUser = normalizeUser(data.user || data);
+      setUser(nextUser);
+      return nextUser;
+    } catch {
+      setUser(null);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Hydrate user session on mount via HttpOnly cookie using /me endpoint
   useEffect(() => {
-    let isMounted = true;
-
-    const fetchCurrentUser = async () => {
-      try {
-        const { data } = await API.get<{ user?: unknown }>('/auth/me');
-        const nextUser = normalizeUser(data.user || data);
-        if (isMounted) {
-          setUser(nextUser);
-        }
-      } catch {
-        if (isMounted) {
-          setUser(null);
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-
     fetchCurrentUser();
+  }, []);
+
+  // Listen for cross-tab auth synchronization (e.g., email verified in another tab)
+  useEffect(() => {
+    let authChannel: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      authChannel = new BroadcastChannel('auth_sync');
+      authChannel.onmessage = (event) => {
+        if (event.data === 'EMAIL_VERIFIED') {
+          fetchCurrentUser();
+        }
+      };
+    }
 
     return () => {
-      isMounted = false;
+      authChannel?.close();
     };
   }, []);
 

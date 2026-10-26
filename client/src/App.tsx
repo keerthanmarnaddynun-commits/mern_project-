@@ -15,6 +15,10 @@ import CommunityActivityPage from './pages/CommunityActivityPage';
 import FacultyProtectedRoute from './components/FacultyProtectedRoute';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 
+import RequireVerification from './components/RequireVerification';
+
+import VerifyEmail from './pages/VerifyEmail';
+
 function RootRedirect() {
   const { user, loading } = useAuth();
 
@@ -71,6 +75,7 @@ function App() {
           {/* Normal User Routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route
             path="/dashboard"
             element={
@@ -83,7 +88,19 @@ function App() {
             path="/post"
             element={
               <ProtectedRoute>
-                <PostItem />
+                <RequireVerification>
+                  <PostItem />
+                </RequireVerification>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/report"
+            element={
+              <ProtectedRoute>
+                <RequireVerification>
+                  <PostItem />
+                </RequireVerification>
               </ProtectedRoute>
             }
           />
@@ -99,7 +116,9 @@ function App() {
             path="/edit-item/:id"
             element={
               <ProtectedRoute>
-                <ItemDetails />
+                <RequireVerification>
+                  <ItemDetails />
+                </RequireVerification>
               </ProtectedRoute>
             }
           />
@@ -107,7 +126,9 @@ function App() {
             path="/my-reports"
             element={
               <ProtectedRoute>
-                <MyReports />
+                <RequireVerification>
+                  <MyReports />
+                </RequireVerification>
               </ProtectedRoute>
             }
           />

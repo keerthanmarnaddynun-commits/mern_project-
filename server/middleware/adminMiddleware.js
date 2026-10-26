@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
 const protectAdmin = async (req, res, next) => {
   let token = null;
@@ -24,6 +25,16 @@ const protectAdmin = async (req, res, next) => {
     // Check for admin role
     if (decoded.role !== 'admin') {
       return res.status(403).json({ message: 'Not authorized, admin only' });
+    }
+
+    const adminId = decoded.id || decoded.userId;
+    if (adminId && adminId !== '000000000000000000000000') {
+      const query = User.findById(adminId);
+      const user = typeof query?.select === 'function' ? await query.select('+tokenVersion') : await query;
+      if (!user || decoded.tokenVersion !== user.tokenVersion) {
+        return res.status(401).json({ message: 'Session expired or invalid. Please log in again.' });
+      }
+      req.user = user;
     }
 
     req.admin = {

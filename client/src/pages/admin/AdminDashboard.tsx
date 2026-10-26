@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminApi } from '../../utils/adminApi';
+import { getSafeExternalUrl } from '../../utils/sanitizeUrl';
 import { getDisputes, resolveDispute, confirmReturn, handoverItem } from '../../services/api';
 import type { Dispute } from '../../types';
 import LogoutModal from '../../components/LogoutModal';
@@ -214,6 +215,9 @@ const DisputesTab = ({
   const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | null>(null);
   const [confirmReturnLoading, setConfirmReturnLoading] = useState<string | null>(null);
   const [handoverLoading, setHandoverLoading] = useState<string | null>(null);
+  const sanitizedProofUrl = selectedDispute
+    ? getSafeExternalUrl(selectedDispute.proofUrl || '')
+    : null;
 
   const handleHandoverItem = async (dispute: Dispute) => {
     if (!dispute.itemId?._id) return;
@@ -683,20 +687,18 @@ const DisputesTab = ({
                 <span className="text-xs font-bold text-gray-800 uppercase tracking-wider block mb-1.5">
                   Ownership Proof Link
                 </span>
-                {selectedDispute.proofUrl ? (
+                {sanitizedProofUrl ? (
                   <a
-                    href={selectedDispute.proofUrl}
+                    href={sanitizedProofUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center justify-between w-full p-3.5 bg-blue-50/50 hover:bg-blue-50 text-blue-700 font-medium text-xs rounded-2xl border border-blue-200 transition-colors break-all"
                   >
-                    <span className="truncate pr-2">{selectedDispute.proofUrl}</span>
+                    <span className="truncate pr-2">{sanitizedProofUrl}</span>
                     <ExternalLink className="w-4 h-4 shrink-0 text-blue-600" />
                   </a>
                 ) : (
-                  <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-xl border border-gray-100">
-                    No proof URL provided by challenger.
-                  </p>
+                  <span>No valid proof link provided</span>
                 )}
               </div>
 

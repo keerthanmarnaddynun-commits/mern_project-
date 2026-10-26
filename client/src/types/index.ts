@@ -61,6 +61,8 @@ export interface User {
   email: string;
   role?: 'user' | 'faculty' | 'admin';
   department?: string;
+  isVerified?: boolean;
+  pendingEmail?: string | null;
 }
 
 export const CATEGORIES = [

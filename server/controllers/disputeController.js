@@ -17,6 +17,20 @@ const submitDispute = async (req, res) => {
     return res.status(400).json({ message: 'Dispute reason is required' });
   }
 
+  const trimmedProofUrl = proofUrl ? String(proofUrl).trim() : '';
+  let normalizedProofUrl = null;
+  if (trimmedProofUrl) {
+    try {
+      const parsed = new URL(trimmedProofUrl);
+      if (parsed.protocol !== 'https:') {
+        return res.status(400).json({ message: 'Proof URL must be a valid HTTPS URL' });
+      }
+      normalizedProofUrl = trimmedProofUrl;
+    } catch {
+      return res.status(400).json({ message: 'Proof URL must be a valid HTTPS URL' });
+    }
+  }
+
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -74,7 +88,7 @@ const submitDispute = async (req, res) => {
       challengerId: req.user._id,
       currentOwnerId,
       reason: reason.trim(),
-      proofUrl: proofUrl ? proofUrl.trim() : null,
+      proofUrl: normalizedProofUrl,
       status: 'pending',
       adminNotes: null,
     });
@@ -85,8 +99,8 @@ const submitDispute = async (req, res) => {
     // 3. Update Item flags with session
     item.isDisputed = true;
     item.disputeReason = reason.trim();
-    if (proofUrl && proofUrl.trim()) {
-      item.disputeProofUrl = proofUrl.trim();
+    if (normalizedProofUrl) {
+      item.disputeProofUrl = normalizedProofUrl;
     }
     await item.save({ session });
 
@@ -105,7 +119,7 @@ const submitDispute = async (req, res) => {
           challengerId: req.user._id,
           currentOwnerId,
           reason: reason.trim(),
-          proofUrl: proofUrl ? proofUrl.trim() : null,
+          proofUrl: normalizedProofUrl,
         },
       }
     ], { session });
@@ -131,7 +145,7 @@ const submitDispute = async (req, res) => {
 const getAllDisputes = async (req, res) => {
   try {
     const disputes = await Dispute.find()
-      .populate('itemId', 'title image_url category location custodyStatus isDisputed')
+      .populate('itemId', 'title image_url category location custodyStatus isDisputed status')
       .populate('challengerId', 'name email')
       .populate('currentOwnerId', 'name email')
       .sort({ createdAt: -1 })
@@ -163,7 +177,7 @@ const resolveDispute = async (req, res) => {
     }
 
     const dispute = await Dispute.findById(id)
-      .populate('itemId')
+      .populate('itemId', 'title image_url category location custodyStatus isDisputed status')
       .populate('challengerId', 'name email')
       .populate('currentOwnerId', 'name email');
 
@@ -283,7 +297,7 @@ const confirmReturn = async (req, res) => {
 
   try {
     const dispute = await Dispute.findById(id)
-      .populate('itemId')
+      .populate('itemId', 'title image_url category location custodyStatus isDisputed status')
       .populate('challengerId', 'name email')
       .populate('currentOwnerId', 'name email')
       .session(session);

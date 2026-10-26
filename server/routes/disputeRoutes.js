@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect, authorize } = require('../middleware/authMiddleware');
+const { protect, authorize, requireVerifiedEmail } = require('../middleware/authMiddleware');
 const validateObjectId = require('../middleware/validateObjectId');
 const {
   submitDispute,
@@ -10,7 +10,7 @@ const {
 } = require('../controllers/disputeController');
 
 // Submit dispute (authenticated user/claimant)
-router.post('/', protect, submitDispute);
+router.post('/', protect, requireVerifiedEmail, submitDispute);
 
 // Admin & Faculty routes
 router.get('/', protect, authorize('admin', 'faculty'), getAllDisputes);

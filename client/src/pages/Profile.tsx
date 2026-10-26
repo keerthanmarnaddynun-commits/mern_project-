@@ -16,9 +16,13 @@ export default function Profile() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -34,10 +38,22 @@ export default function Profile() {
     setSuccess('');
     
     try {
-      const updatedUser = await updateProfile({ name, email });
+      const emailChanging = email.trim().toLowerCase() !== (user?.email || '').toLowerCase();
+      if (emailChanging && !currentPassword) {
+        setError('Current password is required to change your email.');
+        setLoading(false);
+        return;
+      }
+
+      const updatedUser = await updateProfile({
+        name,
+        email,
+        ...(emailChanging ? { currentPassword } : {}),
+      });
       updateUser(updatedUser);
       setSuccess('Profile updated successfully.');
       setIsEditing(false);
+      setCurrentPassword('');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to update profile.');
     } finally {
@@ -51,6 +67,7 @@ export default function Profile() {
       setEmail(user.email);
     }
     setIsEditing(false);
+    setCurrentPassword('');
     setError('');
     setSuccess('');
   };
@@ -60,16 +77,29 @@ export default function Profile() {
   };
 
   const handleDeleteAccount = async () => {
+    if (!confirmDelete) {
+      setDeleteError('Please confirm that you want to permanently delete your account.');
+      return;
+    }
+    if (!deletePassword) {
+      setDeleteError('Current password is required to delete your account.');
+      return;
+    }
+
     setDeleteLoading(true);
-    setError('');
+    setDeleteError('');
     try {
-      await deleteAccount();
+      await deleteAccount({ currentPassword: deletePassword, confirmDelete: true });
+      setShowDeleteModal(false);
+      setDeletePassword('');
+      setDeleteError('');
+      setConfirmDelete(false);
       await signOut();
       navigate('/login');
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to delete account.');
+      const msg = err.response?.data?.message || 'Failed to delete account. Incorrect password.';
+      setDeleteError(msg);
       setDeleteLoading(false);
-      setShowDeleteModal(false);
     }
   };
 
@@ -141,6 +171,21 @@ export default function Profile() {
                   required
                 />
               </div>
+
+              {isEditing && email.trim().toLowerCase() !== (user?.email || '').toLowerCase() && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Current Password</label>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    autoComplete="current-password"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    placeholder="Required to change email"
+                    required
+                  />
+                </div>
+              )}
 
               {isEditing && (
                 <div className="flex items-center gap-3 pt-4">
@@ -218,12 +263,49 @@ export default function Profile() {
                 <AlertTriangle className="w-6 h-6 text-red-600" />
               </div>
               <h2 className="text-xl font-bold text-gray-900 mb-2">Delete Account?</h2>
-              <p className="text-gray-600 text-sm mb-6 leading-relaxed">
-                This will permanently delete your account and your reported items. This action cannot be undone. Are you absolutely sure?
+              <p className="text-gray-600 text-sm mb-4 leading-relaxed">
+                This will permanently delete your account and your reported items. This action cannot be undone. Enter your current password to continue.
               </p>
+              {deleteError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs sm:text-sm flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-600 mt-0.5" />
+                  <span>{deleteError}</span>
+                </div>
+              )}
+              <div className="space-y-3 mb-6">
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(e) => {
+                    setDeletePassword(e.target.value);
+                    if (deleteError) setDeleteError('');
+                  }}
+                  autoComplete="current-password"
+                  placeholder="Current password"
+                  className={`w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:bg-white transition ${
+                    deleteError
+                      ? 'border-red-500 ring-2 ring-red-200 bg-red-50/20'
+                      : 'border-gray-200 focus:ring-red-500'
+                  }`}
+                />
+                <label className="flex items-start gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={confirmDelete}
+                    onChange={(e) => setConfirmDelete(e.target.checked)}
+                    className="mt-0.5 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                  />
+                  I understand this cannot be undone and I want to permanently delete my account.
+                </label>
+              </div>
               <div className="flex items-center justify-end gap-3">
                 <button
-                  onClick={() => setShowDeleteModal(false)}
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setDeletePassword('');
+                    setDeleteError('');
+                    setConfirmDelete(false);
+                  }}
                   disabled={deleteLoading}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
                 >
@@ -231,7 +313,7 @@ export default function Profile() {
                 </button>
                 <button
                   onClick={handleDeleteAccount}
-                  disabled={deleteLoading}
+                  disabled={deleteLoading || !confirmDelete || !deletePassword}
                   className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
                 >
                   {deleteLoading ? 'Deleting...' : 'Yes, Delete'}

@@ -8,6 +8,34 @@ const API = axios.create({
   withCredentials: true,
 });
 
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+export function getCsrfTokenFromCookie(): string | null {
+  if (typeof document === 'undefined' || !document.cookie) {
+    return null;
+  }
+
+  const prefix = 'csrfToken=';
+  const match = document.cookie.split('; ').find((row) => row.startsWith(prefix));
+  if (!match) {
+    return null;
+  }
+
+  return decodeURIComponent(match.slice(prefix.length));
+}
+
+API.interceptors.request.use((config) => {
+  const method = String(config.method || 'get').toUpperCase();
+  if (UNSAFE_METHODS.has(method)) {
+    const csrfToken = getCsrfTokenFromCookie();
+    if (csrfToken) {
+      config.headers = config.headers || {};
+      config.headers['X-CSRF-Token'] = csrfToken;
+    }
+  }
+  return config;
+});
+
 export default API;
 
 export async function fetchItems(type?: 'lost' | 'found'): Promise<Item[]> {
@@ -89,13 +117,20 @@ export async function getProfile(): Promise<User> {
   return response.data;
 }
 
-export async function updateProfile(data: { name?: string; email?: string }): Promise<User> {
+export async function updateProfile(data: {
+  name?: string;
+  email?: string;
+  currentPassword?: string;
+}): Promise<User> {
   const response = await API.patch<User>('/users/me', data);
   return response.data;
 }
 
-export async function deleteAccount(): Promise<void> {
-  await API.delete('/users/me');
+export async function deleteAccount(data: {
+  currentPassword: string;
+  confirmDelete: true;
+}): Promise<void> {
+  await API.delete('/users/me', { data });
 }
 
 export async function getCommunityInsights(): Promise<any> {
@@ -208,6 +243,14 @@ export const handoverItem = async (
   return data;
 };
 
+export const verifyEmail = async (token: string): Promise<{ message: string; isVerified?: boolean; email?: string }> => {
+  const { data } = await API.get('/auth/verify-email', {
+    params: { token },
+  });
+  return data;
+};
 
-
-
+export const resendVerificationEmail = async (): Promise<{ message: string }> => {
+  const { data } = await API.post('/auth/resend-verification');
+  return data;
+};

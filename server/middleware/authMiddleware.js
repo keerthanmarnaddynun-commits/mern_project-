@@ -35,25 +35,36 @@ const protect = async (req, res, next) => {
 
   // Support admin token
   if (decoded.role === 'admin') {
+    const adminId = decoded.id || decoded.userId;
+    if (adminId && adminId !== '000000000000000000000000') {
+      const query = User.findById(adminId);
+      const user = typeof query?.select === 'function' ? await query.select('+tokenVersion') : await query;
+      if (!user || decoded.tokenVersion !== user.tokenVersion) {
+        return res.status(401).json({ message: 'Session expired or invalid. Please log in again.' });
+      }
+      req.user = user;
+    } else {
+      req.user = {
+        _id: '000000000000000000000000',
+        name: 'System Admin',
+        email: decoded.email,
+        role: 'admin',
+      };
+    }
     req.admin = { email: decoded.email, role: 'admin' };
-    req.user = {
-      _id: '000000000000000000000000',
-      name: 'System Admin',
-      email: decoded.email,
-      role: 'admin',
-    };
     return next();
   }
 
-  const userId = decoded.userId;
+  const userId = decoded.id || decoded.userId;
   if (!userId) {
-    return res.status(401).json({ message: 'Not authorized, token invalid' });
+    return res.status(401).json({ message: 'Session expired or invalid. Please log in again.' });
   }
 
   try {
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(401).json({ message: 'Not authorized, user not found' });
+    const query = User.findById(userId);
+    const user = typeof query?.select === 'function' ? await query.select('+tokenVersion') : await query;
+    if (!user || decoded.tokenVersion !== user.tokenVersion) {
+      return res.status(401).json({ message: 'Session expired or invalid. Please log in again.' });
     }
 
     req.user = user;
@@ -90,9 +101,62 @@ const adminProtect = async (req, res, next) => {
   });
 };
 
+/**
+ * Attaches req.user when a valid session cookie/token is present.
+ * Does not reject anonymous requests (for public item reads).
+ */
+const optionalProtect = async (req, res, next) => {
+  let token = null;
+
+  if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7).trim();
+  }
+
+  if (!token) {
+    return next();
+  }
+
+  const secret = process.env.JWT_SECRET;
+  if (!secret || String(secret).trim() === '') {
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(token, secret);
+
+    if (decoded.role === 'admin') {
+      req.admin = { email: decoded.email, role: 'admin' };
+      req.user = {
+        _id: '000000000000000000000000',
+        name: 'System Admin',
+        email: decoded.email,
+        role: 'admin',
+      };
+      return next();
+    }
+
+    const targetId = decoded.id || decoded.userId;
+    if (targetId && targetId !== '000000000000000000000000') {
+      const query = User.findById(targetId);
+      const user = typeof query?.select === 'function' ? await query.select('+tokenVersion') : await query;
+      if (user && decoded.tokenVersion === user.tokenVersion) {
+        req.user = user;
+      }
+    }
+  } catch {
+    // Invalid token: treat as anonymous for public reads
+  }
+
+  return next();
+};
+
 module.exports = {
   protect,
+  optionalProtect,
   authorize,
   adminProtect,
   protectAdmin: adminProtect,
+  requireVerifiedEmail: require('./requireVerifiedEmail'),
 };
