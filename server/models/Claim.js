@@ -58,7 +58,11 @@ const claimSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { getters: false, virtuals: false },
+    toObject: { getters: false, virtuals: false },
+  }
 );
 
 claimSchema.index({ itemId: 1, claimant: 1 }, { unique: true });

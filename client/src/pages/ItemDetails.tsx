@@ -331,6 +331,10 @@ export default function ItemDetails() {
       });
       return;
     }
+    if (!user.isVerified && user.role !== 'admin') {
+      setClaimError('Please verify your email address before submitting a claim.');
+      return;
+    }
     setClaimSubmitting(true);
     try {
       await createClaim(item._id);
@@ -385,6 +389,10 @@ export default function ItemDetails() {
   };
 
   const handleOpenManualModal = async (resubmit: boolean = false) => {
+    if (user && !user.isVerified && user.role !== 'admin') {
+      setClaimError('Please verify your email address before submitting a claim.');
+      return;
+    }
     setIsResubmitting(resubmit);
     setManualError('');
     setManualSuccess(false);

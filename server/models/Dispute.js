@@ -26,6 +26,19 @@ const disputeSchema = new mongoose.Schema(
       type: String,
       default: null,
       trim: true,
+      maxlength: 2048,
+      validate: {
+        validator(value) {
+          if (value == null || value === '') return true;
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === 'https:';
+          } catch {
+            return false;
+          }
+        },
+        message: 'Proof URL must be a valid HTTPS URL',
+      },
     },
     status: {
       type: String,
@@ -38,7 +51,12 @@ const disputeSchema = new mongoose.Schema(
       trim: true,
     },
   },
-  { timestamps: true, collection: 'disputes' }
+  {
+    timestamps: true,
+    collection: 'disputes',
+    toJSON: { getters: false, virtuals: false },
+    toObject: { getters: false, virtuals: false },
+  }
 );
 
 module.exports = mongoose.model('Dispute', disputeSchema);

@@ -17,11 +17,14 @@ if (!process.env.JWT_SECRET || String(process.env.JWT_SECRET).trim() === '') {
 const connectDB = require('./config/db');
 
 // Security packages
+const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const { multerErrorHandler } = require('./middleware/upload');
+const { validateOriginAndCsrf, getAllowedOrigins } = require('./middleware/csrf');
+const errorHandler = require('./middleware/errorHandler');
+const { isWhitelistedIp } = require('./middleware/rateLimiters');
 
 // Route imports
 const authRoutes = require('./routes/authRoutes');
@@ -36,7 +39,60 @@ const uploadRoutes = require('./routes/uploadRoutes');
 
 const app = express();
 
+// Disable X-Powered-By header
+app.disable('x-powered-by');
+
+// Trust only the first hop (e.g., Render/Railway reverse proxy) to prevent X-Forwarded-For IP spoofing.
 app.set('trust proxy', 1);
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Mount Helmet early in the middleware chain with environment-aware CSP and security headers
+app.use(
+  helmet({
+    contentSecurityPolicy: isProduction
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            imgSrc: ["'self'", 'data:'],
+            connectSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+            frameAncestors: ["'none'"],
+          },
+        }
+      : {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", 'data:', 'blob:'],
+            connectSrc: ["'self'", 'ws:', 'http://localhost:*', 'http://127.0.0.1:*'],
+            objectSrc: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+            frameAncestors: ["'none'"],
+          },
+        },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    hsts: isProduction
+      ? {
+          maxAge: 31536000,
+          includeSubDomains: true,
+          preload: false,
+        }
+      : false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    xContentTypeOptions: true,
+  })
+);
+
+// Additional explicit security headers: Permissions-Policy (disabling camera, microphone, geolocation)
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
 // Connect Database
 if (process.env.NODE_ENV !== 'test') {
@@ -59,34 +115,62 @@ app.use((req, res, next) => {
   next();
 });
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:5174'
-];
+// ============================================================================
+// CORS CONFIGURATION
+// ============================================================================
+// SECURITY NOTICE:
+// Suffix matching (e.g., `origin.endsWith('.vercel.app')`) and wildcard matching
+// are strictly forbidden. Any user can deploy an arbitrary app to Vercel (e.g.,
+// https://attacker-app.vercel.app). When `credentials: true` is enabled, suffix
+// matching allows any attacker-controlled Vercel subdomain to send authenticated
+// cross-origin requests, exfiltrate cookies/JWTs, and perform actions as users/admins.
+//
+// Access-Control-Allow-Origin: * is also forbidden with credentials.
+// Only explicit, exact-match origins are permitted.
+// ============================================================================
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (
-      !origin ||
-      allowedOrigins.includes(origin) ||
-      origin.endsWith('.vercel.app')
-    ) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+const allowedOrigins = getAllowedOrigins();
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (such as server-to-server, curl, or mobile apps)
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      // Strict exact-match verification against explicit allow-list
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Reject unauthorized origins cleanly without leaking internal details
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+    exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Retry-After'],
+    optionsSuccessStatus: 204,
+  })
+);
+
+app.use('/api', validateOriginAndCsrf);
+
+// Rate limiters are registered after CORS so 429 JSON bodies keep
+// Access-Control-Allow-Origin and the browser can show the API message
+// instead of a generic CORS failure.
+const rateLimitHeaders = {
+  standardHeaders: true,
+  legacyHeaders: false,
+};
 
 // Rate limiting: 100 req per 15 min globally across /api
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...rateLimitHeaders,
+  skip: isWhitelistedIp,
   message: {
     message: 'Too many requests from this IP, please try again after 15 minutes',
   },
@@ -96,8 +180,7 @@ const globalLimiter = rateLimit({
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...rateLimitHeaders,
   message: {
     message: 'Too many login attempts from this IP, please try again after 15 minutes',
   },
@@ -114,7 +197,12 @@ app.use((req, res, next) => {
 });
 
 // Static uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'");
+  },
+}));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -127,13 +215,13 @@ app.use('/api/disputes', disputeRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/upload', uploadRoutes);
 
-// Multer error handling middleware (returns clean 400 JSON instead of HTML error pages)
-app.use(multerErrorHandler);
-
 // Test route
 app.get('/', (req, res) => {
   res.send('API Running');
 });
+
+// Centralized error handling middleware mounted after all routes
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 

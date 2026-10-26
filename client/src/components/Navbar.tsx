@@ -1,18 +1,80 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Search, MapPin, PlusCircle, Menu, X, User, Activity, TrendingUp, Building2 } from 'lucide-react';
+import { Search, MapPin, PlusCircle, Menu, X, User, Activity, TrendingUp, Building2, AlertCircle, Mail, CheckCircle2, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import NotificationCenter from './NotificationCenter';
+import { resendVerificationEmail } from '../services/api';
 
 export default function Navbar() {
   const { user } = useAuth();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendStatus, setResendStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [resendMessage, setResendMessage] = useState('');
+
+  const handleResendVerification = async () => {
+    setResending(true);
+    setResendStatus('idle');
+    try {
+      const res = await resendVerificationEmail();
+      setResendStatus('success');
+      setResendMessage(res.message || 'Verification email sent!');
+    } catch (err: any) {
+      setResendStatus('error');
+      setResendMessage(err?.response?.data?.message || 'Failed to send verification email. Please try again later.');
+    } finally {
+      setResending(false);
+      setTimeout(() => setResendStatus('idle'), 6000);
+    }
+  };
 
   const isActive = (path: string) => location.pathname === path;
 
   return (
     <nav className="bg-white border-b border-gray-100 sticky top-0 z-50 shadow-sm">
+      {user && !user.isVerified && user.role !== 'admin' && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs sm:text-sm text-amber-800">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span>
+                Your email is unverified. Please verify your college email to report items, submit claims, and upload images.
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              {resendStatus === 'success' && (
+                <span className="flex items-center gap-1 text-green-700 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> {resendMessage}
+                </span>
+              )}
+              {resendStatus === 'error' && (
+                <span className="flex items-center gap-1 text-red-600 font-medium">
+                  <AlertCircle className="w-3.5 h-3.5" /> {resendMessage}
+                </span>
+              )}
+              {resendStatus === 'idle' && (
+                <button
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={resending}
+                  className="font-semibold text-amber-900 underline hover:text-amber-700 disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                >
+                  {resending ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" /> Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="w-3 h-3" /> Resend verification email
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <Link to="/dashboard" className="flex items-center gap-2 group">

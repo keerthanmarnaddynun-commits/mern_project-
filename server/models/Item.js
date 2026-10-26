@@ -93,13 +93,31 @@ const itemSchema = new mongoose.Schema(
     disputeProofUrl: {
       type: String,
       default: null,
+      trim: true,
+      maxlength: 2048,
+      validate: {
+        validator(value) {
+          if (value == null || value === '') return true;
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === 'https:';
+          } catch {
+            return false;
+          }
+        },
+        message: 'Proof URL must be a valid HTTPS URL',
+      },
     },
     isHidden: {
       type: Boolean,
       default: false,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { getters: false, virtuals: false },
+    toObject: { getters: false, virtuals: false },
+  }
 );
 
 module.exports = mongoose.model('Item', itemSchema);

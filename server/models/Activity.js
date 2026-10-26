@@ -56,7 +56,11 @@ const activitySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { getters: false, virtuals: false },
+    toObject: { getters: false, virtuals: false },
+  }
 );
 
 module.exports = mongoose.model('Activity', activitySchema);

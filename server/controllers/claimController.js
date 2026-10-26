@@ -10,6 +10,11 @@ const {
 } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 
+const PUBLIC_ITEM_FIELDS =
+  '_id title description category type location date_occurred image_url status createdAt postedBy custodyStatus is_resolved isDisputed';
+const PUBLIC_USER_FIELDS = 'name';
+const STAFF_USER_FIELDS = 'name email';
+
 const NO_MATCHING_LOST_MSG = 'Report a matching lost item before claiming this item.';
 
 const REASON = {
@@ -300,9 +305,9 @@ const getReceivedClaims = async (req, res) => {
     const foundItemIds = userFoundItems.map(item => item._id);
 
     const receivedClaims = await Claim.find({ itemId: { $in: foundItemIds } })
-      .populate('itemId', 'title category location date_occurred')
-      .populate('lostItemId', 'title category location date_occurred')
-      .populate('claimant', 'name email')
+      .populate('itemId', PUBLIC_ITEM_FIELDS)
+      .populate('lostItemId', PUBLIC_ITEM_FIELDS)
+      .populate('claimant', STAFF_USER_FIELDS)
       .sort({ createdAt: -1 })
       .limit(100)
       .lean();
@@ -324,8 +329,8 @@ const getReceivedClaims = async (req, res) => {
 const getMyClaims = async (req, res) => {
   try {
     const claims = await Claim.find({ claimant: req.user._id })
-      .populate('itemId', 'title category location date_occurred status is_resolved')
-      .populate('lostItemId', 'title category location date_occurred status is_resolved')
+      .populate('itemId', PUBLIC_ITEM_FIELDS)
+      .populate('lostItemId', PUBLIC_ITEM_FIELDS)
       .sort({ createdAt: -1 })
       .limit(100)
       .lean();
@@ -344,14 +349,16 @@ const getDepartmentClaims = async (req, res) => {
     }
 
     const claims = await Claim.find({ status: 'pending', department: req.user.department })
-      .populate('claimant', 'name email')
+      .populate('claimant', STAFF_USER_FIELDS)
       .populate({
         path: 'itemId',
-        populate: { path: 'postedBy', select: 'name email' },
+        select: PUBLIC_ITEM_FIELDS,
+        populate: { path: 'postedBy', select: STAFF_USER_FIELDS },
       })
       .populate({
         path: 'lostItemId',
-        populate: { path: 'postedBy', select: 'name email' },
+        select: PUBLIC_ITEM_FIELDS,
+        populate: { path: 'postedBy', select: STAFF_USER_FIELDS },
       })
       .sort({ createdAt: 1 })
       .limit(100)
@@ -395,7 +402,7 @@ const approveClaim = async (req, res) => {
 
   try {
     const claim = await Claim.findById(id)
-      .populate('claimant', 'name email')
+      .populate('claimant', STAFF_USER_FIELDS)
       .populate('itemId')
       .populate('lostItemId')
       .session(session);
@@ -616,8 +623,8 @@ const rejectClaim = async (req, res) => {
     }
 
     const claim = await Claim.findById(id)
-      .populate('claimant', 'name email')
-      .populate('itemId');
+      .populate('claimant', STAFF_USER_FIELDS)
+      .populate('itemId', PUBLIC_ITEM_FIELDS);
 
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found' });
@@ -676,9 +683,9 @@ const getRecentlyReturned = async (req, res) => {
       status: 'approved',
       updatedAt: { $gte: new Date(Date.now() - 48 * 60 * 60 * 1000) },
     })
-      .populate('itemId')
-      .populate('lostItemId')
-      .populate('claimant', 'name email')
+      .populate('itemId', PUBLIC_ITEM_FIELDS)
+      .populate('lostItemId', PUBLIC_ITEM_FIELDS)
+      .populate('claimant', PUBLIC_USER_FIELDS)
       .sort({ updatedAt: -1 })
       .limit(100)
       .lean();
@@ -695,7 +702,7 @@ const resubmitClaim = async (req, res) => {
     const { id } = req.params;
     const { lostItemId, reasonType, reasonText, manualReasonType, manualReasonText } = req.body || {};
 
-    const claim = await Claim.findById(id).populate('itemId');
+    const claim = await Claim.findById(id).populate('itemId', PUBLIC_ITEM_FIELDS);
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found' });
     }
@@ -822,9 +829,9 @@ const deleteClaim = async (req, res) => {
 const getAllClaims = async (req, res) => {
   try {
     const claims = await Claim.find()
-      .populate('itemId', 'title category location date_occurred')
-      .populate('lostItemId', 'title category location date_occurred')
-      .populate('claimant', 'name email')
+      .populate('itemId', PUBLIC_ITEM_FIELDS)
+      .populate('lostItemId', PUBLIC_ITEM_FIELDS)
+      .populate('claimant', PUBLIC_USER_FIELDS)
       .sort({ createdAt: -1 })
       .limit(100)
       .lean();

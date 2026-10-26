@@ -8,6 +8,8 @@ const Activity = require('../models/Activity');
 const Dispute = require('../models/Dispute');
 const { matchOppositePendingSameCategory } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
+const { issueCsrfToken } = require('../middleware/csrf');
+const { signToken } = require('../utils/jwt');
 
 // POST /api/admin/login
 const loginAdmin = async (req, res) => {
@@ -21,7 +23,7 @@ const loginAdmin = async (req, res) => {
     const inputPassword = String(password).trim();
 
     // 1. Query MongoDB users collection for user with role: 'admin'
-    const adminUser = await User.findOne({ email: inputEmail, role: 'admin' }).select('+password');
+    const adminUser = await User.findOne({ email: inputEmail, role: 'admin' }).select('+password +tokenVersion');
 
     let isValid = false;
     let verifiedEmail = inputEmail;
@@ -46,9 +48,13 @@ const loginAdmin = async (req, res) => {
       return res.status(401).json({ message: 'Invalid admin credentials' });
     }
 
-    const token = jwt.sign(
-      { email: verifiedEmail, role: 'admin' },
-      process.env.JWT_SECRET,
+    const token = signToken(
+      adminUser || {
+        id: '000000000000000000000000',
+        email: verifiedEmail,
+        role: 'admin',
+        tokenVersion: 0,
+      },
       { expiresIn: '1d' }
     );
 
@@ -59,8 +65,11 @@ const loginAdmin = async (req, res) => {
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
+    const csrfToken = issueCsrfToken(res);
+
     return res.status(200).json({
       token,
+      csrfToken,
       admin: {
         email: verifiedEmail,
         role: 'admin',

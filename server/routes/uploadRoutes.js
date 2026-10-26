@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const path = require('path');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, requireVerifiedEmail } = require('../middleware/authMiddleware');
 const { uploadSingle } = require('../middleware/upload');
+const { processUploadedImage } = require('../middleware/imageProcessor');
+const { uploadLimiter } = require('../middleware/rateLimiters');
 
 // POST /api/upload
-// Securely upload an image (max 5MB, JPEG/PNG/WebP only)
-router.post('/', protect, uploadSingle('image'), (req, res) => {
+// Auth → verified check → limiter → memory Multer → magic-byte check + Sharp re-encode → handler
+router.post('/', protect, requireVerifiedEmail, uploadLimiter, uploadSingle('image'), processUploadedImage, (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded. Please provide an image file.' });
   }

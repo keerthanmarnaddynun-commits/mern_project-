@@ -39,7 +39,11 @@ const notificationSchema = new mongoose.Schema(
       default: 'normal',
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { getters: false, virtuals: false },
+    toObject: { getters: false, virtuals: false },
+  }
 );
 
 module.exports = mongoose.model('Notification', notificationSchema);

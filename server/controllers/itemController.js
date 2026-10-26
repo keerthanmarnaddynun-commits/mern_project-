@@ -7,10 +7,53 @@ const Notification = require('../models/Notification');
 const { matchOppositePendingSameCategory, confidenceRank } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 
+const PUBLIC_ITEM_FIELDS =
+  '_id title description category type location date_occurred image_url status createdAt postedBy custodyStatus is_resolved isDisputed';
+
+const PRIVATE_ITEM_FIELDS = [
+  'contact_email',
+  'contact_phone',
+  'handoverNotes',
+  'receiverName',
+  'receiverRole',
+  'disputeReason',
+  'disputeProofUrl',
+];
+
 function normalizeText(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function pickPublicItem(doc) {
+  const obj = typeof doc.toObject === 'function' ? doc.toObject() : { ...doc };
+  const allowed = PUBLIC_ITEM_FIELDS.split(/\s+/).filter(Boolean);
+  const projected = {};
+  allowed.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(obj, field)) {
+      projected[field] = obj[field];
+    }
+  });
+  return projected;
+}
+
+function isItemOwner(item, user) {
+  if (!item || !user || !user._id) return false;
+  const postedBy = item.postedBy && item.postedBy._id ? item.postedBy._id : item.postedBy;
+  return postedBy && postedBy.toString() === user._id.toString();
+}
+
+function canViewItemPii(req, item) {
+  const role = req.user?.role || req.admin?.role;
+  if (role === 'admin') return true;
+  return isItemOwner(item, req.user);
+}
+
+function canViewItemDispute(req, item) {
+  const role = req.user?.role || req.admin?.role;
+  if (role === 'admin' || role === 'faculty') return true;
+  return isItemOwner(item, req.user);
 }
 
 const getItems = async (req, res) => {
@@ -28,7 +71,10 @@ const getItems = async (req, res) => {
       query.type = status;
     }
 
-    const items = await Item.find(query).sort({ createdAt: -1 }).limit(100);
+    const items = await Item.find(query)
+      .select(PUBLIC_ITEM_FIELDS)
+      .sort({ createdAt: -1 })
+      .limit(100);
     res.status(200).json(items);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -53,24 +99,38 @@ const getItemById = async (req, res) => {
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
     }
-    const itemObj = item.toObject();
+
+    const privileged = canViewItemPii(req, item);
+    const itemObj = privileged ? item.toObject() : pickPublicItem(item);
+
+    if (!privileged) {
+      PRIVATE_ITEM_FIELDS.forEach((field) => {
+        delete itemObj[field];
+      });
+    }
+
     if (
-      item.custodyStatus === 'ready_for_pickup' ||
-      item.custodyStatus === 'recall_pending' ||
-      item.isDisputed
+      canViewItemDispute(req, item) &&
+      (item.custodyStatus === 'ready_for_pickup' ||
+        item.custodyStatus === 'recall_pending' ||
+        item.isDisputed)
     ) {
+      const isAdmin = (req.user?.role || req.admin?.role) === 'admin';
+      const userSelect = isAdmin ? 'name email' : 'name';
       const dispute = await Dispute.findOne({
         itemId: item._id,
         status: { $in: ['resolved', 'ready_for_pickup', 'recall_pending', 'pending'] },
       })
-        .populate('challengerId', 'name email')
-        .populate('currentOwnerId', 'name email')
+        .select(isAdmin ? 'status reason proofUrl adminNotes challengerId currentOwnerId itemId' : 'status reason challengerId currentOwnerId itemId')
+        .populate('challengerId', userSelect)
+        .populate('currentOwnerId', userSelect)
         .sort({ updatedAt: -1 });
 
       if (dispute) {
         itemObj.dispute = dispute;
       }
     }
+
     res.status(200).json(itemObj);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -317,21 +377,27 @@ const getSimilarItems = async (req, res) => {
       status: 'pending',
       category: current.category,
       _id: { $ne: current._id },
-    }).lean();
+    })
+      .select(PUBLIC_ITEM_FIELDS)
+      .lean();
 
     const matches = [];
 
     for (const cand of candidates) {
       const m = matchOppositePendingSameCategory(current, cand);
       if (!m) continue;
-      matches.push({ item: cand, confidence: m.confidence, reasons: m.reasons });
+      matches.push({ item: pickPublicItem(cand), confidence: m.confidence, reasons: m.reasons });
     }
 
     matches.sort((a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence));
     const top = matches.slice(0, 5);
 
+    const currentPayload = canViewItemPii(req, current)
+      ? current.toObject()
+      : pickPublicItem(current);
+
     return res.status(200).json({
-      currentItem: current.toObject(),
+      currentItem: currentPayload,
       matches: top,
     });
   } catch (error) {
@@ -416,6 +482,20 @@ const disputeItemHandover = async (req, res) => {
     const { id } = req.params;
     const { reason, proofUrl } = req.body;
 
+    const trimmedProofUrl = proofUrl ? String(proofUrl).trim() : '';
+    let normalizedProofUrl = null;
+    if (trimmedProofUrl) {
+      try {
+        const parsed = new URL(trimmedProofUrl);
+        if (parsed.protocol !== 'https:') {
+          return res.status(400).json({ message: 'Proof URL must be a valid HTTPS URL' });
+        }
+        normalizedProofUrl = trimmedProofUrl;
+      } catch {
+        return res.status(400).json({ message: 'Proof URL must be a valid HTTPS URL' });
+      }
+    }
+
     const item = await Item.findById(id);
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
@@ -447,7 +527,7 @@ const disputeItemHandover = async (req, res) => {
         challengerId: req.user._id,
         currentOwnerId,
         reason: (reason || 'Handover contested by user').trim(),
-        proofUrl: proofUrl ? proofUrl.trim() : null,
+        proofUrl: normalizedProofUrl,
         status: 'pending',
         adminNotes: null,
       });
@@ -456,7 +536,7 @@ const disputeItemHandover = async (req, res) => {
 
     item.isDisputed = true;
     item.disputeReason = reason || null;
-    item.disputeProofUrl = proofUrl || null;
+    item.disputeProofUrl = normalizedProofUrl;
 
     await item.save();
 
@@ -474,7 +554,7 @@ const disputeItemHandover = async (req, res) => {
           category: item.category,
           keyword: extractKeyword(item.title),
           reason: reason || null,
-          proofUrl: proofUrl || null,
+          proofUrl: normalizedProofUrl,
         },
       });
     } catch (logErr) {
