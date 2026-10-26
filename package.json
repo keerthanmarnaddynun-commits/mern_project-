@@ -1,0 +1,18 @@
+{
+  "name": "mern-application",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MERN Application Security Pipeline and Project Root",
+  "scripts": {
+    "start": "npm run start --prefix server",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "test:server": "npm test --prefix server",
+    "audit:server": "npm audit --prefix server --omit=dev --audit-level=high",
+    "audit:client": "npm audit --prefix client --audit-level=high",
+    "audit": "npm run audit:server && npm run audit:client",
+    "scan:secrets": "gitleaks detect --verbose",
+    "scan:sast": "semgrep scan --config=\"p/javascript\" --config=\"p/nodejs\" --config=\"p/react\" --config=\"p/secrets\"",
+    "security": "npm run audit && npm run scan:secrets && npm run scan:sast"
+  }
+}
