@@ -13,8 +13,34 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 async function detectFileType(buffer) {
-  const { fileTypeFromBuffer } = await import('file-type');
-  return fileTypeFromBuffer(buffer);
+  try {
+    const { fileTypeFromBuffer } = await import('file-type');
+    return await fileTypeFromBuffer(buffer);
+  } catch (error) {
+    if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 4) {
+      return null;
+    }
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+      return { mime: 'image/jpeg', ext: 'jpg' };
+    }
+    // PNG: 89 50 4E 47
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+      return { mime: 'image/png', ext: 'png' };
+    }
+    // WebP: RIFF .... WEBP
+    if (
+      buffer.length >= 12 &&
+      buffer[0] === 0x52 &&
+      buffer[1] === 0x49 &&
+      buffer[2] === 0x46 &&
+      buffer[3] === 0x46 &&
+      buffer.toString('utf8', 8, 12) === 'WEBP'
+    ) {
+      return { mime: 'image/webp', ext: 'webp' };
+    }
+    return null;
+  }
 }
 
 async function processImageBuffer(buffer) {

@@ -95,12 +95,28 @@ function tokensMatch(headerToken, cookieToken) {
   return crypto.timingSafeEqual(headerBuf, cookieBuf);
 }
 
+const auditLogger = require('../utils/auditLogger');
+
 function logCsrfDenial(req, reason) {
   console.warn('[csrf] request denied', {
     method: req.method,
     route: req.originalUrl || req.url,
     ip: req.ip,
     reason,
+  });
+
+  auditLogger.log({
+    req,
+    action: 'CSRF_VALIDATION_FAILED',
+    category: 'SECURITY',
+    severity: 'WARNING',
+    outcome: 'BLOCKED',
+    statusCode: 403,
+    metadata: {
+      reason,
+      route: req.originalUrl || req.url,
+      method: req.method,
+    },
   });
 }
 

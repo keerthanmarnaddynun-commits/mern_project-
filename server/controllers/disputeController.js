@@ -4,6 +4,7 @@ const Item = require('../models/Item');
 const Claim = require('../models/Claim');
 const Activity = require('../models/Activity');
 const Notification = require('../models/Notification');
+const auditLogger = require('../utils/auditLogger');
 
 const submitDispute = async (req, res) => {
   const itemId = req.body.itemId || req.params.itemId;
@@ -125,6 +126,19 @@ const submitDispute = async (req, res) => {
     ], { session });
 
     await session.commitTransaction();
+
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: 'DISPUTE_ESCALATED',
+      category: 'DISPUTE',
+      severity: 'WARNING',
+      outcome: 'SUCCESS',
+      statusCode: 201,
+      targetType: 'Dispute',
+      targetId: savedDispute._id,
+      metadata: { itemId: item._id, reason: reason.trim() },
+    });
 
     return res.status(201).json({
       message: 'Dispute submitted successfully',
@@ -267,6 +281,18 @@ const resolveDispute = async (req, res) => {
         console.error('Notification creation error (resolveDispute):', notifErr);
       }
     }
+
+    auditLogger.log({
+      req,
+      action: 'DISPUTE_RESOLVED',
+      category: 'DISPUTE',
+      severity: action === 'approve' ? 'WARNING' : 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Dispute',
+      targetId: dispute._id,
+      metadata: { action, itemId: item._id, adminNotes: adminNotes ? adminNotes.trim() : null },
+    });
 
     return res.json({
       message:

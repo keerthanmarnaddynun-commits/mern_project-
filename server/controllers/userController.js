@@ -8,6 +8,7 @@ const Claim = require('../models/Claim');
 const Dispute = require('../models/Dispute');
 const Notification = require('../models/Notification');
 const Activity = require('../models/Activity');
+const auditLogger = require('../utils/auditLogger');
 const { clearCsrfCookie } = require('../middleware/csrf');
 const {
   generateVerificationToken,
@@ -100,6 +101,23 @@ const updateProfile = async (req, res) => {
     }
 
     const { name, email, currentPassword, newPassword, password } = req.body || {};
+
+    if (name !== undefined && typeof name !== 'string') {
+      return res.status(400).json({ message: 'Name must be a string' });
+    }
+    if (email !== undefined && typeof email !== 'string') {
+      return res.status(400).json({ message: 'Email must be a string' });
+    }
+    if (currentPassword !== undefined && typeof currentPassword !== 'string') {
+      return res.status(400).json({ message: 'Current password must be a string' });
+    }
+    if (newPassword !== undefined && typeof newPassword !== 'string') {
+      return res.status(400).json({ message: 'New password must be a string' });
+    }
+    if (password !== undefined && typeof password !== 'string') {
+      return res.status(400).json({ message: 'Password must be a string' });
+    }
+
     const nextEmail = email !== undefined ? String(email).toLowerCase().trim() : null;
     const emailChanging = Boolean(nextEmail && nextEmail !== String(user.email).toLowerCase());
     const nextPassword = newPassword || password;
@@ -120,7 +138,7 @@ const updateProfile = async (req, res) => {
       }
 
       const updates = {};
-      if (name) updates.name = name;
+      if (name) updates.name = name.trim();
 
       let emailPendingTokenRaw = null;
       if (emailChanging) {
@@ -177,6 +195,34 @@ const updateProfile = async (req, res) => {
         }).catch((err) => console.error('Error sending email change alert to old email:', err?.message || err));
       }
 
+      if (emailChanging) {
+        auditLogger.log({
+          req,
+          action: 'USER_EMAIL_CHANGE_REQUESTED',
+          category: 'AUTH',
+          severity: 'INFO',
+          outcome: 'SUCCESS',
+          statusCode: 200,
+          targetType: 'User',
+          targetId: updatedUser._id,
+          metadata: { oldEmail: user.email, newEmail: nextEmail },
+        });
+      }
+
+      if (passwordChanging) {
+        auditLogger.log({
+          req,
+          action: 'USER_PASSWORD_CHANGED',
+          category: 'AUTH',
+          severity: 'INFO',
+          outcome: 'SUCCESS',
+          statusCode: 200,
+          targetType: 'User',
+          targetId: updatedUser._id,
+          metadata: { email: user.email },
+        });
+      }
+
       return res.status(200).json({
         _id: updatedUser._id,
         name: updatedUser.name,
@@ -190,7 +236,7 @@ const updateProfile = async (req, res) => {
     }
 
     if (name) {
-      user.name = name;
+      user.name = name.trim();
     }
 
     const updatedUser = await user.save();
@@ -209,7 +255,12 @@ const updateProfile = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
-    if (!currentPassword || !newPassword) {
+    if (
+      typeof currentPassword !== 'string' ||
+      typeof newPassword !== 'string' ||
+      !currentPassword ||
+      !newPassword
+    ) {
       return res.status(400).json({ message: 'Current password and new password are required' });
     }
     if (!validatePasswordComplexity(newPassword)) {
@@ -231,6 +282,18 @@ const changePassword = async (req, res) => {
     await User.findByIdAndUpdate(req.user._id, {
       $set: { password: hashedPassword },
       $inc: { tokenVersion: 1 },
+    });
+
+    auditLogger.log({
+      req,
+      action: 'USER_PASSWORD_CHANGED',
+      category: 'AUTH',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'User',
+      targetId: req.user._id,
+      metadata: { email: req.user.email },
     });
 
     return res.status(200).json({ message: 'Password changed successfully' });
@@ -403,6 +466,19 @@ const deleteProfile = async (req, res) => {
     await cleanupUploadedFiles(filesToDelete);
 
     clearAuthCookies(res);
+
+    auditLogger.log({
+      req,
+      actorId: userId,
+      action: 'USER_ACCOUNT_DELETED',
+      category: 'AUTH',
+      severity: 'WARNING',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'User',
+      targetId: userId,
+      metadata: { email: req.user.email },
+    });
 
     return res.status(200).json({ message: 'Account deleted successfully' });
   } catch (error) {

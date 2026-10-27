@@ -1,20 +1,56 @@
-# dependencies
+# Dependencies
 node_modules/
 client/node_modules/
 server/node_modules/
 
-# env files
-server/.env
-client/.env
-.env
+# Environment & Secrets
+*.env*
+!*.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+secret*
+credentials*
 
-# build outputs
+# Logs & Debug
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build Outputs & Deployments
 dist/
 build/
+.vercel/
 
-# OS/editor files
+# Test Coverage & Artifacts
+coverage/
+.nyc_output/
+reports/
+
+# Uploads & Temp Files
+server/uploads/*
+!server/uploads/.gitkeep
+scratch/
+
+# Local Databases & Dumps
+*.sqlite
+*.sqlite3
+*.db
+dump/
+*.bson
+
+# Editor & OS Artifacts
+.idea/
 .vscode/
+.vscode/settings.json
+*.swp
+*.swo
+*.suo
 .DS_Store
 Thumbs.db
-
-.vercel/

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminApi } from '../../utils/adminApi';
+import { adminApi } from '../../services/adminApi';
 import { getSafeExternalUrl } from '../../utils/sanitizeUrl';
 import { getDisputes, resolveDispute, confirmReturn, handoverItem } from '../../services/api';
 import type { Dispute } from '../../types';

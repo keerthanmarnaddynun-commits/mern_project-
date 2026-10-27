@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Activity = require('../models/Activity');
+const auditLogger = require('../utils/auditLogger');
 const { issueCsrfToken, clearCsrfCookie } = require('../middleware/csrf');
 const { getJwtSecret, signToken } = require('../utils/jwt');
 const {
@@ -42,8 +43,15 @@ const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: 'Name, email, and password are required' });
+    if (
+      typeof name !== 'string' ||
+      typeof email !== 'string' ||
+      typeof password !== 'string' ||
+      !name.trim() ||
+      !email.trim() ||
+      !password
+    ) {
+      return res.status(400).json({ message: 'Name, email, and password are required and must be valid strings' });
     }
 
     if (!validatePasswordComplexity(password)) {
@@ -97,6 +105,20 @@ const registerUser = async (req, res) => {
       console.error('Activity log error:', logErr);
     }
 
+    auditLogger.log({
+      req,
+      actorId: user._id,
+      actorRole: 'user',
+      action: 'USER_REGISTER',
+      category: 'AUTH',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 201,
+      targetType: 'User',
+      targetId: user._id,
+      metadata: { email: user.email, name: user.name },
+    });
+
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -131,7 +153,12 @@ const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
-    if (!email || !password) {
+    if (
+      typeof email !== 'string' ||
+      typeof password !== 'string' ||
+      !email.trim() ||
+      !password
+    ) {
       return res.status(400).json({ message: 'Email and password are required' });
     }
 
@@ -155,6 +182,19 @@ const loginUser = async (req, res) => {
 
       const csrfToken = issueCsrfToken(res);
 
+      auditLogger.log({
+        req,
+        actorId: '000000000000000000000000',
+        actorRole: 'admin',
+        action: 'ADMIN_LOGIN',
+        category: 'ADMIN',
+        severity: 'CRITICAL',
+        outcome: 'SUCCESS',
+        statusCode: 200,
+        targetType: 'Admin',
+        metadata: { email: adminEmail },
+      });
+
       return res.status(200).json({
         token,
         csrfToken,
@@ -170,15 +210,50 @@ const loginUser = async (req, res) => {
 
     const user = await User.findOne({ email: emailNorm }).select('+password +tokenVersion');
     if (!user) {
+      auditLogger.log({
+        req,
+        action: 'USER_LOGIN_FAILED',
+        category: 'AUTH',
+        severity: 'WARNING',
+        outcome: 'FAILURE',
+        statusCode: 401,
+        targetType: 'User',
+        metadata: { email: inputEmail, reason: 'user_not_found' },
+      });
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
+      auditLogger.log({
+        req,
+        action: 'USER_LOGIN_FAILED',
+        category: 'AUTH',
+        severity: 'WARNING',
+        outcome: 'FAILURE',
+        statusCode: 401,
+        targetType: 'User',
+        targetId: user._id,
+        metadata: { email: user.email, reason: 'password_mismatch' },
+      });
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     const token = signToken(user);
+
+    auditLogger.log({
+      req,
+      actorId: user._id,
+      actorRole: user.role || 'user',
+      action: 'USER_LOGIN',
+      category: 'AUTH',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'User',
+      targetId: user._id,
+      metadata: { email: user.email },
+    });
 
     res.cookie('token', token, {
       httpOnly: true,
