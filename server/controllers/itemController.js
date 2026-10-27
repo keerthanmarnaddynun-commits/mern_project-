@@ -4,6 +4,7 @@ const Activity = require('../models/Activity');
 const Dispute = require('../models/Dispute');
 const Claim = require('../models/Claim');
 const Notification = require('../models/Notification');
+const auditLogger = require('../utils/auditLogger');
 const { matchOppositePendingSameCategory, confidenceRank } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 
@@ -56,9 +57,17 @@ function canViewItemDispute(req, item) {
   return isItemOwner(item, req.user);
 }
 
+const ALLOWED_SORT_FIELDS = ['createdAt', 'date_occurred', 'title', 'category'];
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+function escapeRegex(str) {
+  return typeof str === 'string' ? str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
+}
+
 const getItems = async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, type, category, search, sortBy, sortOrder, order, page, limit } = req.query || {};
     
     const query = {
       status: { $ne: 'resolved' },
@@ -67,14 +76,46 @@ const getItems = async (req, res) => {
       custodyStatus: { $ne: 'rejected' },
     };
 
-    if (status) {
-      query.type = status;
+    const itemType = typeof type === 'string' ? type : typeof status === 'string' ? status : null;
+    if (itemType && ['lost', 'found'].includes(itemType.toLowerCase())) {
+      query.type = itemType.toLowerCase();
     }
+
+    if (category && typeof category === 'string' && category.trim()) {
+      query.category = category.trim();
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const sanitizedSearch = escapeRegex(search.trim());
+      query.$or = [
+        { title: { $regex: sanitizedSearch, $options: 'i' } },
+        { description: { $regex: sanitizedSearch, $options: 'i' } },
+        { location: { $regex: sanitizedSearch, $options: 'i' } },
+      ];
+    }
+
+    // Whitelist sort fields and strict direction
+    const sortField = ALLOWED_SORT_FIELDS.includes(sortBy) ? sortBy : 'createdAt';
+    const directionStr = String(sortOrder || order || '').toLowerCase();
+    const sortDirection = (directionStr === 'asc' || directionStr === '1' || sortOrder === 1) ? 1 : -1;
+    const sortOptions = { [sortField]: sortDirection };
+
+    // Enforce pagination limits
+    const parsedLimit = parseInt(limit, 10);
+    const paginationLimit = (!isNaN(parsedLimit) && parsedLimit > 0)
+      ? Math.min(parsedLimit, MAX_LIMIT)
+      : (limit !== undefined ? DEFAULT_LIMIT : 100);
+
+    const parsedPage = parseInt(page, 10);
+    const paginationPage = (!isNaN(parsedPage) && parsedPage > 0) ? parsedPage : 1;
+    const skip = (paginationPage - 1) * paginationLimit;
 
     const items = await Item.find(query)
       .select(PUBLIC_ITEM_FIELDS)
-      .sort({ createdAt: -1 })
-      .limit(100);
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(paginationLimit);
+
     res.status(200).json(items);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -251,6 +292,19 @@ const createItem = async (req, res) => {
       console.error('Activity log error:', logErr);
     }
 
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: 'ITEM_CREATED',
+      category: 'ITEM',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 201,
+      targetType: 'Item',
+      targetId: newItem._id,
+      metadata: { title: newItem.title, category: newItem.category, type: newItem.type },
+    });
+
     res.status(201).json(newItem);
   } catch (error) {
     console.error("CREATE ITEM ERROR:", error);
@@ -326,6 +380,19 @@ const updateItem = async (req, res) => {
       await item.save();
     }
 
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: 'ITEM_UPDATED',
+      category: 'ITEM',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Item',
+      targetId: item._id,
+      metadata: { title: item.title, id: item._id },
+    });
+
     res.status(200).json(item);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -349,6 +416,20 @@ const deleteItem = async (req, res) => {
     }
 
     await item.deleteOne();
+
+    const isAdmin = req.user.role === 'admin';
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: isAdmin ? 'ADMIN_FORCE_DELETE_ITEM' : 'ITEM_DELETED',
+      category: isAdmin ? 'ADMIN' : 'ITEM',
+      severity: isAdmin ? 'CRITICAL' : 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Item',
+      targetId: item._id,
+      metadata: { title: item.title, id: item._id, forcedByAdmin: isAdmin },
+    });
 
     res.status(200).json({ message: 'Item deleted successfully' });
   } catch (error) {
@@ -725,6 +806,18 @@ const handoverItem = async (req, res) => {
     ], { session });
 
     await session.commitTransaction();
+
+    auditLogger.log({
+      req,
+      action: 'ITEM_HANDOVER_COMPLETED',
+      category: 'ITEM',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Item',
+      targetId: item._id,
+      metadata: { title: item.title, id: item._id },
+    });
 
     return res.status(200).json({
       message: 'Item handover completed successfully.',

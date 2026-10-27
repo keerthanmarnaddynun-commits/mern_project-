@@ -24,6 +24,19 @@ const protectAdmin = async (req, res, next) => {
     
     // Check for admin role
     if (decoded.role !== 'admin') {
+      const auditLogger = require('../utils/auditLogger');
+      auditLogger.log({
+        req,
+        action: 'ADMIN_ACCESS_DENIED',
+        category: 'AUTHZ',
+        severity: 'WARNING',
+        outcome: 'BLOCKED',
+        statusCode: 403,
+        metadata: {
+          attemptedRole: decoded.role,
+          path: req.originalUrl || req.url,
+        },
+      });
       return res.status(403).json({ message: 'Not authorized, admin only' });
     }
 

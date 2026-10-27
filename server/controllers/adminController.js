@@ -6,6 +6,8 @@ const Item = require('../models/Item');
 const Claim = require('../models/Claim');
 const Activity = require('../models/Activity');
 const Dispute = require('../models/Dispute');
+const AuditLog = require('../models/AuditLog');
+const auditLogger = require('../utils/auditLogger');
 const { matchOppositePendingSameCategory } = require('../utils/itemSimilarity');
 const { extractKeyword } = require('../utils/titleKeyword');
 const { issueCsrfToken } = require('../middleware/csrf');
@@ -15,7 +17,12 @@ const { signToken } = require('../utils/jwt');
 const loginAdmin = async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    if (!email || !password) {
+    if (
+      typeof email !== 'string' ||
+      typeof password !== 'string' ||
+      !email.trim() ||
+      !password
+    ) {
       return res.status(400).json({ message: 'Email and password are required' });
     }
 
@@ -45,6 +52,16 @@ const loginAdmin = async (req, res) => {
     }
 
     if (!isValid) {
+      auditLogger.log({
+        req,
+        actorRole: 'anonymous',
+        action: 'ADMIN_LOGIN_FAILED',
+        category: 'ADMIN',
+        severity: 'CRITICAL',
+        outcome: 'FAILURE',
+        statusCode: 401,
+        metadata: { attemptedEmail: inputEmail },
+      });
       return res.status(401).json({ message: 'Invalid admin credentials' });
     }
 
@@ -66,6 +83,19 @@ const loginAdmin = async (req, res) => {
     });
 
     const csrfToken = issueCsrfToken(res);
+
+    auditLogger.log({
+      req,
+      actorId: adminUser ? adminUser._id : '000000000000000000000000',
+      actorRole: 'admin',
+      action: 'ADMIN_LOGIN',
+      category: 'ADMIN',
+      severity: 'CRITICAL',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Admin',
+      metadata: { email: verifiedEmail },
+    });
 
     return res.status(200).json({
       token,
@@ -462,6 +492,18 @@ const closeDispute = async (req, res) => {
       console.error('Activity log error (close dispute):', logErr);
     }
 
+    auditLogger.log({
+      req,
+      action: 'ADMIN_CLOSE_DISPUTE_OVERRIDE',
+      category: 'ADMIN',
+      severity: 'CRITICAL',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Item',
+      targetId: item._id,
+      metadata: { itemId: item._id, title: item.title },
+    });
+
     res.json({
       message: 'Dispute closed and item locked successfully',
       item,
@@ -487,6 +529,89 @@ const getActivity = async (req, res) => {
   }
 };
 
+// GET /api/admin/audit-logs
+const getAuditLogs = async (req, res) => {
+  try {
+    const {
+      startDate,
+      endDate,
+      action,
+      category,
+      severity,
+      actorId,
+      page = 1,
+      limit = 20,
+    } = req.query || {};
+
+    const filter = {};
+
+    if (action && typeof action === 'string' && action.trim()) {
+      filter.action = action.trim();
+    }
+
+    const ALLOWED_CATEGORIES = ['AUTH', 'AUTHZ', 'ITEM', 'CLAIM', 'DISPUTE', 'ADMIN', 'SECURITY', 'UPLOAD'];
+    if (category && typeof category === 'string' && ALLOWED_CATEGORIES.includes(category.toUpperCase().trim())) {
+      filter.category = category.toUpperCase().trim();
+    }
+
+    const ALLOWED_SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'];
+    if (severity && typeof severity === 'string' && ALLOWED_SEVERITIES.includes(severity.toUpperCase().trim())) {
+      filter.severity = severity.toUpperCase().trim();
+    }
+
+    if (actorId && typeof actorId === 'string' && actorId.trim()) {
+      filter.actorId = actorId.trim();
+    }
+
+    if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) {
+        const parsedStart = new Date(startDate);
+        if (!isNaN(parsedStart.getTime())) {
+          filter.createdAt.$gte = parsedStart;
+        }
+      }
+      if (endDate) {
+        const parsedEnd = new Date(endDate);
+        if (!isNaN(parsedEnd.getTime())) {
+          filter.createdAt.$lte = parsedEnd;
+        }
+      }
+      if (Object.keys(filter.createdAt).length === 0) {
+        delete filter.createdAt;
+      }
+    }
+
+    const MAX_PAGE_SIZE = 100;
+    const requestedLimit = parseInt(limit, 10) || 20;
+    const pageSize = Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE);
+
+    const requestedPage = parseInt(page, 10) || 1;
+    const currentPage = Math.max(requestedPage, 1);
+    const skip = (currentPage - 1) * pageSize;
+
+    const [logs, total] = await Promise.all([
+      AuditLog.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+      AuditLog.countDocuments(filter),
+    ]);
+
+    return res.status(200).json({
+      logs,
+      total,
+      page: currentPage,
+      limit: pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    });
+  } catch (error) {
+    console.error('getAuditLogs error:', error);
+    return res.status(500).json({ message: 'Server error retrieving audit logs' });
+  }
+};
+
 module.exports = {
   loginAdmin,
   getOverview,
@@ -496,5 +621,6 @@ module.exports = {
   getAllItems,
   getActivity,
   closeDispute,
+  getAuditLogs,
 };
 

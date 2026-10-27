@@ -75,6 +75,8 @@ const protect = async (req, res, next) => {
   }
 };
 
+const auditLogger = require('../utils/auditLogger');
+
 /**
  * Authorize specific roles (e.g. 'admin', 'faculty').
  */
@@ -82,6 +84,19 @@ const authorize = (...roles) => {
   return (req, res, next) => {
     const userRole = req.user?.role || req.admin?.role;
     if (!userRole || !roles.includes(userRole)) {
+      auditLogger.log({
+        req,
+        action: 'ROLE_AUTHORIZATION_DENIED',
+        category: 'AUTHZ',
+        severity: 'WARNING',
+        outcome: 'BLOCKED',
+        statusCode: 403,
+        metadata: {
+          requiredRoles: roles,
+          userRole: userRole || 'anonymous',
+          path: req.originalUrl || req.url,
+        },
+      });
       return res.status(403).json({ message: 'Access denied: insufficient permissions' });
     }
     next();
@@ -95,6 +110,18 @@ const adminProtect = async (req, res, next) => {
   return protect(req, res, () => {
     const role = req.user?.role || req.admin?.role;
     if (role !== 'admin') {
+      auditLogger.log({
+        req,
+        action: 'ADMIN_ACCESS_DENIED',
+        category: 'AUTHZ',
+        severity: 'WARNING',
+        outcome: 'BLOCKED',
+        statusCode: 403,
+        metadata: {
+          attemptedRole: role || 'anonymous',
+          path: req.originalUrl || req.url,
+        },
+      });
       return res.status(403).json({ message: 'Not authorized, admin only' });
     }
     next();

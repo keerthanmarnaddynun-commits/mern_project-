@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+client/node_modules
+server/node_modules
+client/dist
+server/uploads/*
+!server/uploads/.gitkeep
+.env
+!.env.example
+coverage
+tests
+docs
+scratch
+*.log
+.DS_Store

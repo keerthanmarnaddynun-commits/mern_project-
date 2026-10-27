@@ -64,8 +64,8 @@ const errorHandler = (err, req, res, next) => {
     statusCode = 400;
     specificMessage = 'Resource already exists.';
   }
-  // 3. Mongoose validation errors / CastError -> 400
-  else if (err.name === 'ValidationError' || err.name === 'CastError') {
+  // 3. Mongoose validation errors / CastError / NoSQL injection error -> 400
+  else if (err.name === 'ValidationError' || err.name === 'CastError' || err.name === 'NoSqlInjectionError') {
     statusCode = 400;
     specificMessage = 'Invalid request input.';
   }

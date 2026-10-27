@@ -4,6 +4,7 @@ const Item = require('../models/Item');
 const Activity = require('../models/Activity');
 const Dispute = require('../models/Dispute');
 const Notification = require('../models/Notification');
+const auditLogger = require('../utils/auditLogger');
 const {
   pickBestMatchingLostForFound,
   getEligibleUserLostFilter,
@@ -98,6 +99,19 @@ const createClaim = async (req, res) => {
     } catch (logErr) {
       console.error('Activity log error:', logErr);
     }
+
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: 'CLAIM_SUBMITTED',
+      category: 'CLAIM',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 201,
+      targetType: 'Claim',
+      targetId: claim._id,
+      metadata: { itemId: item._id, claimType: 'auto_match' },
+    });
 
     return res.status(201).json(claim);
   } catch (error) {
@@ -284,6 +298,19 @@ const createManualClaim = async (req, res) => {
     } catch (logErr) {
       console.error('Activity log error:', logErr);
     }
+
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: 'CLAIM_SUBMITTED',
+      category: 'CLAIM',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 201,
+      targetType: 'Claim',
+      targetId: claim._id,
+      metadata: { itemId: item._id, claimType: 'manual_review', reasonType },
+    });
 
     return res.status(201).json({ message: 'Manual review requested successfully', claim });
   } catch (error) {
@@ -595,6 +622,19 @@ const approveClaim = async (req, res) => {
 
     await session.commitTransaction();
 
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: 'CLAIM_APPROVED',
+      category: 'CLAIM',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Claim',
+      targetId: claim._id,
+      metadata: { itemId: claim.itemId?._id || claim.itemId, verificationMethod: claim.verificationMethod },
+    });
+
     return res.status(200).json({
       message: 'Claim approved and item custody marked as returned successfully',
       approvedClaim: claim,
@@ -666,6 +706,19 @@ const rejectClaim = async (req, res) => {
     } catch (logErr) {
       console.error('Activity log error (reject claim):', logErr);
     }
+
+    auditLogger.log({
+      req,
+      actorId: req.user._id,
+      action: 'CLAIM_REJECTED',
+      category: 'CLAIM',
+      severity: 'INFO',
+      outcome: 'SUCCESS',
+      statusCode: 200,
+      targetType: 'Claim',
+      targetId: claim._id,
+      metadata: { itemId: claim.itemId?._id || claim.itemId, reason },
+    });
 
     return res.status(200).json({
       message: 'Claim rejected successfully',

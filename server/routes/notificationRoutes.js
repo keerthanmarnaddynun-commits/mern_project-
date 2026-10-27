@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
+const validateObjectId = require('../middleware/validateObjectId');
 const Notification = require('../models/Notification');
 
 // GET /api/notifications - Get current user's notifications
@@ -28,7 +29,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // PATCH /api/notifications/:id/read - Mark notification as read
-router.patch('/:id/read', protect, async (req, res) => {
+router.patch('/:id/read', protect, validateObjectId, async (req, res) => {
   try {
     const { id } = req.params;
     const notification = await Notification.findOneAndUpdate(

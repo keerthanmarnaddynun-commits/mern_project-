@@ -18,6 +18,18 @@ const requireVerifiedEmail = (req, res, next) => {
 
   // Check email verification status
   if (!req.user.isVerified) {
+    const auditLogger = require('../utils/auditLogger');
+    auditLogger.log({
+      req,
+      action: 'UNVERIFIED_EMAIL_BLOCKED',
+      category: 'AUTHZ',
+      severity: 'WARNING',
+      outcome: 'BLOCKED',
+      statusCode: 403,
+      targetType: 'User',
+      targetId: req.user._id,
+      metadata: { email: req.user.email, path: req.originalUrl || req.url },
+    });
     return res.status(403).json({
       message: 'Please verify your email address before performing this action.',
     });

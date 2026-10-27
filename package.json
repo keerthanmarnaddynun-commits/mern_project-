@@ -8,6 +8,7 @@
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
     "test:server": "npm test --prefix server",
+    "test:e2e": "node server/node_modules/jest/bin/jest.js tests/e2e/e2e-security-simulation.test.js --runInBand",
     "audit:server": "npm audit --prefix server --omit=dev --audit-level=high",
     "audit:client": "npm audit --prefix client --audit-level=high",
     "audit": "npm run audit:server && npm run audit:client",

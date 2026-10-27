@@ -105,15 +105,10 @@ app.use(express.json());
 // Cookie Parser Middleware
 app.use(cookieParser());
 
-// Strip NoSQL injection operators ($gt, etc.)
-app.use((req, res, next) => {
-  ['body', 'params', 'headers', 'query'].forEach((key) => {
-    if (req[key]) {
-      mongoSanitize.sanitize(req[key]);
-    }
-  });
-  next();
-});
+// Comprehensive NoSQL injection protection (validates and rejects forbidden operators & prototype pollution)
+const { mongoSanitizeMiddleware } = require('./utils/sanitizeMongoInput');
+app.use(mongoSanitizeMiddleware({ mode: 'validateStrict' }));
+
 
 // ============================================================================
 // CORS CONFIGURATION
@@ -131,6 +126,8 @@ app.use((req, res, next) => {
 
 const allowedOrigins = getAllowedOrigins();
 
+const auditLogger = require('./utils/auditLogger');
+
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -143,6 +140,14 @@ app.use(
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
+
+      auditLogger.log({
+        action: 'CORS_REQUEST_BLOCKED',
+        category: 'SECURITY',
+        severity: 'WARNING',
+        outcome: 'BLOCKED',
+        metadata: { origin },
+      });
 
       // Reject unauthorized origins cleanly without leaking internal details
       return callback(new Error('Not allowed by CORS'));
@@ -160,9 +165,25 @@ app.use('/api', validateOriginAndCsrf);
 // Rate limiters are registered after CORS so 429 JSON bodies keep
 // Access-Control-Allow-Origin and the browser can show the API message
 // instead of a generic CORS failure.
+const rateLimitAuditHandler = (actionName) => (req, res, next, options) => {
+  auditLogger.log({
+    req,
+    action: actionName,
+    category: 'SECURITY',
+    severity: 'WARNING',
+    outcome: 'BLOCKED',
+    statusCode: options.statusCode || 429,
+    metadata: {
+      message: options.message?.message || options.message,
+    },
+  });
+  return res.status(options.statusCode).json(options.message);
+};
+
 const rateLimitHeaders = {
   standardHeaders: true,
   legacyHeaders: false,
+  handler: rateLimitAuditHandler('RATE_LIMIT_EXCEEDED'),
 };
 
 // Rate limiting: 100 req per 15 min globally across /api
@@ -181,6 +202,7 @@ const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   ...rateLimitHeaders,
+  handler: rateLimitAuditHandler('LOGIN_RATE_LIMIT_EXCEEDED'),
   message: {
     message: 'Too many login attempts from this IP, please try again after 15 minutes',
   },

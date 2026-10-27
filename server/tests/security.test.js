@@ -43,6 +43,16 @@ jest.mock('../models/Activity', () => ({
   create: jest.fn().mockResolvedValue({}),
   updateMany: jest.fn().mockResolvedValue({}),
 }));
+jest.mock('../models/AuditLog', () => ({
+  create: jest.fn().mockResolvedValue({}),
+  find: jest.fn().mockReturnValue({
+    sort: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockResolvedValue([]),
+  }),
+  countDocuments: jest.fn().mockResolvedValue(0),
+}));
 
 const User = require('../models/User');
 const Item = require('../models/Item');
@@ -50,6 +60,7 @@ const Claim = require('../models/Claim');
 const Dispute = require('../models/Dispute');
 const Notification = require('../models/Notification');
 const Activity = require('../models/Activity');
+const AuditLog = require('../models/AuditLog');
 const mongoose = require('mongoose');
 const app = require('../server');
 
@@ -1126,6 +1137,346 @@ describe('Security & Access Control Integration Tests', () => {
         });
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('Test Suite 9: Comprehensive NoSQL Injection Protection', () => {
+    const {
+      sanitize,
+      validateStrict,
+      NoSqlInjectionError,
+    } = require('../utils/sanitizeMongoInput');
+
+    describe('Central Sanitization Utility (sanitizeMongoInput.js)', () => {
+      it('should recursively strip forbidden operator keys in sanitize mode', () => {
+        const payload = {
+          email: { $gt: '' },
+          password: { $ne: '' },
+          nested: {
+            $regex: '.*',
+            safeField: 'hello',
+            array: [{ $where: 'return true' }, { safe: 123 }],
+          },
+        };
+        const cleaned = sanitize(payload);
+        expect(cleaned.email).toEqual({});
+        expect(cleaned.password).toEqual({});
+        expect(cleaned.nested.safeField).toBe('hello');
+        expect(cleaned.nested.$regex).toBeUndefined();
+        expect(cleaned.nested.array[0].$where).toBeUndefined();
+        expect(cleaned.nested.array[1].safe).toBe(123);
+      });
+
+      it('should strip prototype pollution keys in sanitize mode', () => {
+        const payload = JSON.parse('{"__proto__": {"isAdmin": true}, "name": "Alice"}');
+        const cleaned = sanitize(payload);
+        expect(cleaned.name).toBe('Alice');
+        expect(Object.prototype.hasOwnProperty.call(cleaned, '__proto__')).toBe(false);
+      });
+
+      it('should throw NoSqlInjectionError in validateStrict mode for $ operators', () => {
+        expect(() => {
+          validateStrict({ email: { $gt: '' } });
+        }).toThrow(NoSqlInjectionError);
+
+        expect(() => {
+          validateStrict({ filter: { $expr: { $eq: [1, 1] } } });
+        }).toThrow(NoSqlInjectionError);
+      });
+
+      it('should throw NoSqlInjectionError in validateStrict mode for prototype pollution', () => {
+        const payload = JSON.parse('{"__proto__": {"isAdmin": true}}');
+        expect(() => {
+          validateStrict(payload);
+        }).toThrow(NoSqlInjectionError);
+      });
+
+      it('should return valid: false when throw option is false', () => {
+        const result = validateStrict({ query: { $where: 'return true' } }, { throw: false });
+        expect(result.valid).toBe(false);
+        expect(result.key).toBe('$where');
+      });
+    });
+
+    describe('HTTP Endpoint Protection & Injection Payloads', () => {
+      it('should reject payload {"email": {"$gt": ""}, "password": {"$ne": ""}} with 400', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const response = await request(app)
+          .post('/api/auth/login')
+          .set('Content-Type', 'application/json')
+          .send('{"email": {"$gt": ""}, "password": {"$ne": ""}}');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty('message', 'Invalid request input.');
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          '[SECURITY] NoSQL injection attempt blocked:',
+          expect.objectContaining({
+            route: '/api/auth/login',
+            method: 'POST',
+            rejectedKey: '$gt',
+          })
+        );
+        warnSpy.mockRestore();
+      });
+
+      it('should reject payload {"email": {"$regex": ".*"}} with 400', async () => {
+        const response = await request(app)
+          .post('/api/auth/login')
+          .set('Content-Type', 'application/json')
+          .send('{"email": {"$regex": ".*"}, "password": "password123"}');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty('message', 'Invalid request input.');
+      });
+
+      it('should reject payload {"email": {"$where": "return true"}} with 400', async () => {
+        const response = await request(app)
+          .post('/api/auth/login')
+          .set('Content-Type', 'application/json')
+          .send('{"email": {"$where": "return true"}, "password": "password123"}');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty('message', 'Invalid request input.');
+      });
+
+      it('should reject payload {"filter": {"$expr": {"$eq": [1, 1]}}} with 400', async () => {
+        const response = await request(app)
+          .post('/api/auth/login')
+          .set('Content-Type', 'application/json')
+          .send('{"filter": {"$expr": {"$eq": [1, 1]}}}');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty('message', 'Invalid request input.');
+      });
+
+      it('should reject payload {"__proto__": {"isAdmin": true}} with 400', async () => {
+        const response = await request(app)
+          .post('/api/auth/login')
+          .set('Content-Type', 'application/json')
+          .send('{"__proto__": {"isAdmin": true}}');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty('message', 'Invalid request input.');
+      });
+
+      it('should reject query parameter injection with 400', async () => {
+        const response = await request(app)
+          .get('/api/items?status[$ne]=resolved');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty('message', 'Invalid request input.');
+      });
+
+      it('should enforce validateObjectId and reject non-ObjectId parameter with 400', async () => {
+        const response = await request(app)
+          .get('/api/items/not-a-valid-objectid-12345');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty('message');
+        expect(response.body.message).toMatch(/Invalid ID/i);
+      });
+
+      it('should safely handle search, whitelisted sorting, and pagination on /api/items', async () => {
+        Item.find.mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          sort: jest.fn().mockReturnThis(),
+          skip: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockResolvedValue([]),
+        });
+
+        const response = await request(app)
+          .get('/api/items')
+          .query({
+            search: 'keys.*+?',
+            sortBy: 'title',
+            sortOrder: 'asc',
+            page: '2',
+            limit: '15',
+          });
+
+        expect(response.status).toBe(200);
+      });
+    });
+  });
+
+  describe('Test Suite 10: Secure Audit Logging', () => {
+    const auditLogger = require('../utils/auditLogger');
+    const { stripSensitiveKeys } = require('../utils/auditLogger');
+
+    describe('1. Failed logins and CSRF failures generate audit events', () => {
+      it('should log an audit event when a login attempt fails with invalid credentials', async () => {
+        User.findOne.mockReturnValueOnce({
+          select: jest.fn().mockResolvedValue(null),
+        });
+
+        const response = await request(app)
+          .post('/api/auth/login')
+          .set('Content-Type', 'application/json')
+          .send({
+            email: 'nonexistent@campus.edu',
+            password: 'wrongPassword123',
+          });
+
+        expect(response.status).toBe(401);
+        expect(AuditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            action: 'USER_LOGIN_FAILED',
+            category: 'AUTH',
+            severity: 'WARNING',
+            outcome: 'FAILURE',
+            statusCode: 401,
+            metadata: expect.objectContaining({
+              email: 'nonexistent@campus.edu',
+            }),
+          })
+        );
+      });
+
+      it('should log an audit event when a CSRF check fails', async () => {
+        const response = await request(app)
+          .patch('/api/items/507f1f77bcf86cd799439021')
+          .set('Cookie', [`token=${userAToken}`]) // Missing CSRF token
+          .send({ title: 'New Title' });
+
+        expect(response.status).toBe(403);
+        expect(AuditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            action: 'CSRF_VALIDATION_FAILED',
+            category: 'SECURITY',
+            severity: 'WARNING',
+            outcome: 'BLOCKED',
+            statusCode: 403,
+          })
+        );
+      });
+    });
+
+    describe('2. Sensitive keys are stripped from log metadata', () => {
+      it('should recursively strip all forbidden credentials and token keys', () => {
+        const dirtyMetadata = {
+          user: 'test_student',
+          password: 'plainTextPassword123!',
+          currentPassword: 'oldSecretPassword',
+          newPassword: 'newSecretPassword',
+          token: 'test-token-placeholder',
+          jwt: 'raw.jwt.token',
+          csrfToken: 'csrfTokenSecret123',
+          cookie: 'session=secret_cookie_val',
+          authorization: 'Bearer supersecretjwt',
+          secret: 'app_secret_value',
+          resetToken: 'rst_349082340',
+          verificationToken: 'vtf_349082340',
+          nested: {
+            password: 'nestedPassword',
+            safeNote: 'harmless data',
+            arrayData: [
+              { jwt: 'token-inside-array', cleanVal: 42 },
+            ],
+          },
+        };
+
+        const cleaned = stripSensitiveKeys(dirtyMetadata);
+
+        expect(cleaned).toEqual({
+          user: 'test_student',
+          nested: {
+            safeNote: 'harmless data',
+            arrayData: [{ cleanVal: 42 }],
+          },
+        });
+        expect(cleaned.password).toBeUndefined();
+        expect(cleaned.jwt).toBeUndefined();
+        expect(cleaned.token).toBeUndefined();
+        expect(cleaned.authorization).toBeUndefined();
+        expect(cleaned.nested.password).toBeUndefined();
+        expect(cleaned.nested.arrayData[0].jwt).toBeUndefined();
+      });
+
+      it('should strip sensitive keys when calling auditLogger.log', async () => {
+        await auditLogger.log({
+          action: 'TEST_EVENT',
+          category: 'SECURITY',
+          metadata: {
+            password: 'secretPassword',
+            token: 'jwtToken',
+            safeInfo: 'safe',
+          },
+        });
+
+        expect(AuditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            metadata: {
+              safeInfo: 'safe',
+            },
+          })
+        );
+      });
+    });
+
+    describe('3. Main API does not crash if logger fails', () => {
+      it('should handle logger database failure gracefully without crashing request', async () => {
+        AuditLog.create.mockRejectedValueOnce(new Error('Simulated AuditLog Mongo write failure'));
+
+        const response = await request(app)
+          .post('/api/auth/login')
+          .set('Content-Type', 'application/json')
+          .send({
+            email: 'ghost@campus.edu',
+            password: 'password123',
+          });
+
+        // Request still completes cleanly with 401 instead of crashing with 500
+        expect(response.status).toBe(401);
+        expect(response.body).toHaveProperty('message', 'Invalid email or password');
+      });
+    });
+
+    describe('4. Non-admins are blocked from /api/admin/audit-logs', () => {
+      it('should reject unauthenticated request with 401', async () => {
+        const response = await request(app)
+          .get('/api/admin/audit-logs');
+
+        expect(response.status).toBe(401);
+        expect(response.body).toHaveProperty('message', 'Not authorized, no token');
+      });
+
+      it('should reject non-admin user with 403', async () => {
+        const response = await request(app)
+          .get('/api/admin/audit-logs')
+          .set('Cookie', [userACookie]);
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty('message', 'Not authorized, admin only');
+      });
+
+      it('should allow admin user to access /api/admin/audit-logs with pagination and filters', async () => {
+        AuditLog.find.mockReturnValueOnce({
+          sort: jest.fn().mockReturnThis(),
+          skip: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue([
+            {
+              action: 'ADMIN_LOGIN',
+              category: 'ADMIN',
+              severity: 'CRITICAL',
+              outcome: 'SUCCESS',
+            },
+          ]),
+        });
+        AuditLog.countDocuments.mockResolvedValueOnce(1);
+
+        const response = await request(app)
+          .get('/api/admin/audit-logs?category=ADMIN&severity=CRITICAL&page=1&limit=10')
+          .set('Cookie', [adminCookie]);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty('logs');
+        expect(response.body).toHaveProperty('total', 1);
+        expect(response.body).toHaveProperty('page', 1);
+        expect(response.body).toHaveProperty('limit', 10);
+      });
     });
   });
 });
