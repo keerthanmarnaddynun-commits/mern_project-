@@ -89,7 +89,7 @@ const getProfile = async (req, res) => {
     }
     res.status(200).json(user);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -253,7 +253,7 @@ const updateProfile = async (req, res) => {
     return res.status(200).json(toPublicUser(updatedUser));
   } catch (error) {
     console.error('updateProfile error:', error);
-    return res.status(500).json({ message: 'Server error', error: error.message });
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 

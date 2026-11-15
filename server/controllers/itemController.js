@@ -118,7 +118,7 @@ const getItems = async (req, res) => {
 
     res.status(200).json(items);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -127,7 +127,7 @@ const getMyReports = async (req, res) => {
     const items = await Item.find({ postedBy: req.user._id }).sort({ createdAt: -1 }).limit(100);
     res.status(200).json(items);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -174,7 +174,7 @@ const getItemById = async (req, res) => {
 
     res.status(200).json(itemObj);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -395,7 +395,7 @@ const updateItem = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -433,7 +433,7 @@ const deleteItem = async (req, res) => {
 
     res.status(200).json({ message: 'Item deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -482,7 +482,7 @@ const getSimilarItems = async (req, res) => {
       matches: top,
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -518,7 +518,7 @@ const confirmItemReceipt = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -554,7 +554,7 @@ const denyItemReceipt = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -644,7 +644,7 @@ const disputeItemHandover = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -826,7 +826,7 @@ const handoverItem = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     console.error('handoverItem error:', error);
-    return res.status(500).json({ message: 'Server error processing handover', error: error.message });
+    return res.status(500).json({ message: 'Server error processing handover' });
   } finally {
     session.endSession();
   }
