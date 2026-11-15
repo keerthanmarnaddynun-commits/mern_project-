@@ -89,9 +89,22 @@ const getProfile = async (req, res) => {
     }
     res.status(200).json(user);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
+
+function toPublicUser(u) {
+  if (!u) return null;
+  return {
+    _id: u._id,
+    name: u.name,
+    email: u.email,
+    role: u.role || 'user',
+    department: u.department || null,
+    isVerified: Boolean(u.isVerified),
+    pendingEmail: u.pendingEmail || null,
+  };
+}
 
 const updateProfile = async (req, res) => {
   try {
@@ -224,11 +237,7 @@ const updateProfile = async (req, res) => {
       }
 
       return res.status(200).json({
-        _id: updatedUser._id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        pendingEmail: updatedUser.pendingEmail || null,
-        isVerified: updatedUser.isVerified,
+        ...toPublicUser(updatedUser),
         message: emailChanging
           ? 'A verification link has been sent to your new email address. Please verify it to complete the update.'
           : 'Profile updated successfully.',
@@ -241,14 +250,10 @@ const updateProfile = async (req, res) => {
 
     const updatedUser = await user.save();
 
-    return res.status(200).json({
-      _id: updatedUser._id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-    });
+    return res.status(200).json(toPublicUser(updatedUser));
   } catch (error) {
     console.error('updateProfile error:', error);
-    return res.status(500).json({ message: 'Server error', error: error.message });
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 

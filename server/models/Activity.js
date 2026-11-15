@@ -22,6 +22,7 @@ const activitySchema = new mongoose.Schema(
         'handover_denied',
         'item_recovered',
         'handover_completed',
+        'manual_review_requested',
       ],
     },
     message: {

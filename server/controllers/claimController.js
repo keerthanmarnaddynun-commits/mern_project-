@@ -226,6 +226,9 @@ const createManualClaim = async (req, res) => {
     if (!reasonType) {
       return res.status(400).json({ message: 'Reason type is required' });
     }
+    if (reasonText && (typeof reasonText !== 'string' || reasonText.trim().length > 1000)) {
+      return res.status(400).json({ message: 'Reason text cannot exceed 1000 characters' });
+    }
 
     const item = await Item.findById(itemId);
     if (!item) {
@@ -643,7 +646,7 @@ const approveClaim = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     console.error('approveClaim error:', error);
-    return res.status(500).json({ message: 'Server error approving claim', error: error.message });
+    return res.status(500).json({ message: 'Server error approving claim' });
   } finally {
     session.endSession();
   }
@@ -726,7 +729,7 @@ const rejectClaim = async (req, res) => {
     });
   } catch (error) {
     console.error('rejectClaim error:', error);
-    return res.status(500).json({ message: 'Server error rejecting claim', error: error.message });
+    return res.status(500).json({ message: 'Server error rejecting claim' });
   }
 };
 
@@ -754,6 +757,13 @@ const resubmitClaim = async (req, res) => {
   try {
     const { id } = req.params;
     const { lostItemId, reasonType, reasonText, manualReasonType, manualReasonText } = req.body || {};
+
+    if (reasonText && (typeof reasonText !== 'string' || reasonText.trim().length > 1000)) {
+      return res.status(400).json({ message: 'Reason text cannot exceed 1000 characters' });
+    }
+    if (manualReasonText && (typeof manualReasonText !== 'string' || manualReasonText.trim().length > 1000)) {
+      return res.status(400).json({ message: 'Reason text cannot exceed 1000 characters' });
+    }
 
     const claim = await Claim.findById(id).populate('itemId', PUBLIC_ITEM_FIELDS);
     if (!claim) {
@@ -816,7 +826,7 @@ const resubmitClaim = async (req, res) => {
     });
   } catch (error) {
     console.error('resubmitClaim error:', error);
-    return res.status(500).json({ message: 'Server error resubmitting claim', error: error.message });
+    return res.status(500).json({ message: 'Server error resubmitting claim' });
   }
 };
 
@@ -850,7 +860,7 @@ const updateClaim = async (req, res) => {
     return res.status(200).json({ message: 'Claim updated successfully', claim });
   } catch (error) {
     console.error('updateClaim error:', error);
-    return res.status(500).json({ message: 'Server error updating claim', error: error.message });
+    return res.status(500).json({ message: 'Server error updating claim' });
   }
 };
 
@@ -875,7 +885,7 @@ const deleteClaim = async (req, res) => {
     return res.status(200).json({ message: 'Claim deleted successfully' });
   } catch (error) {
     console.error('deleteClaim error:', error);
-    return res.status(500).json({ message: 'Server error deleting claim', error: error.message });
+    return res.status(500).json({ message: 'Server error deleting claim' });
   }
 };
 
@@ -890,7 +900,7 @@ const getAllClaims = async (req, res) => {
       .lean();
     return res.status(200).json(claims);
   } catch (error) {
-    return res.status(500).json({ message: 'Server error fetching claims', error: error.message });
+    return res.status(500).json({ message: 'Server error fetching claims' });
   }
 };
 

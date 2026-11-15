@@ -118,7 +118,7 @@ const getItems = async (req, res) => {
 
     res.status(200).json(items);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -127,7 +127,7 @@ const getMyReports = async (req, res) => {
     const items = await Item.find({ postedBy: req.user._id }).sort({ createdAt: -1 }).limit(100);
     res.status(200).json(items);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -174,12 +174,179 @@ const getItemById = async (req, res) => {
 
     res.status(200).json(itemObj);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
+const ALLOWED_CATEGORIES = [
+  'Electronics',
+  'Clothing',
+  'Accessories',
+  'Documents',
+  'Keys',
+  'Wallet / Purse',
+  'Bag / Backpack',
+  'Jewelry',
+  'Pets',
+  'Other',
+];
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateItemFields(body, { partial = false } = {}) {
+  if (!body || typeof body !== 'object') {
+    return { valid: false, message: 'Invalid request body' };
+  }
+
+  if (!partial) {
+    if (
+      !body.title ||
+      !body.description ||
+      !body.category ||
+      !body.type ||
+      !body.location ||
+      !body.date_occurred ||
+      !body.contact_email
+    ) {
+      return { valid: false, message: 'Missing required fields' };
+    }
+  }
+
+  // category
+  if (!partial || body.category !== undefined) {
+    if (typeof body.category !== 'string') {
+      return { valid: false, message: 'Category must be a string' };
+    }
+    const trimmedCategory = body.category.trim();
+    if (!ALLOWED_CATEGORIES.includes(trimmedCategory)) {
+      return { valid: false, message: `Category must be one of: ${ALLOWED_CATEGORIES.join(', ')}` };
+    }
+  }
+
+  // type (create only: lost or found)
+  if (!partial) {
+    if (typeof body.type !== 'string') {
+      return { valid: false, message: 'Type must be a string' };
+    }
+    const trimmedType = body.type.trim();
+    if (trimmedType !== 'lost' && trimmedType !== 'found') {
+      return { valid: false, message: 'Type must be either lost or found' };
+    }
+  }
+
+  // title: 1-100 chars
+  if (!partial || body.title !== undefined) {
+    if (typeof body.title !== 'string') {
+      return { valid: false, message: 'Title must be a string' };
+    }
+    const trimmedTitle = body.title.trim();
+    if (trimmedTitle.length < 1 || trimmedTitle.length > 100) {
+      return { valid: false, message: 'Title must be between 1 and 100 characters' };
+    }
+  }
+
+  // description: 1-2000 chars
+  if (!partial || body.description !== undefined) {
+    if (typeof body.description !== 'string') {
+      return { valid: false, message: 'Description must be a string' };
+    }
+    const trimmedDesc = body.description.trim();
+    if (trimmedDesc.length < 1 || trimmedDesc.length > 2000) {
+      return { valid: false, message: 'Description must be between 1 and 2000 characters' };
+    }
+  }
+
+  // location: 1-200 chars
+  if (!partial || body.location !== undefined) {
+    if (typeof body.location !== 'string') {
+      return { valid: false, message: 'Location must be a string' };
+    }
+    const trimmedLoc = body.location.trim();
+    if (trimmedLoc.length < 1 || trimmedLoc.length > 200) {
+      return { valid: false, message: 'Location must be between 1 and 200 characters' };
+    }
+  }
+
+  // contact_email: matches ^[^\s@]+@[^\s@]+\.[^\s@]+$ and max 254 chars
+  if (!partial || body.contact_email !== undefined) {
+    if (typeof body.contact_email !== 'string') {
+      return { valid: false, message: 'Contact email must be a string' };
+    }
+    const trimmedEmail = body.contact_email.trim();
+    if (trimmedEmail.length > 254 || !EMAIL_REGEX.test(trimmedEmail)) {
+      return { valid: false, message: 'Contact email must be a valid email address with max 254 characters' };
+    }
+  }
+
+  // contact_phone: optional, max 30
+  if (body.contact_phone !== undefined && body.contact_phone !== null) {
+    if (typeof body.contact_phone !== 'string') {
+      return { valid: false, message: 'Contact phone must be a string' };
+    }
+    const trimmedPhone = body.contact_phone.trim();
+    if (trimmedPhone.length > 30) {
+      return { valid: false, message: 'Contact phone cannot exceed 30 characters' };
+    }
+  }
+
+  // custodyLocation, custodyDepartment, receiverName, receiverRole: optional, max 200
+  const opt200 = ['custodyLocation', 'custodyDepartment', 'receiverName', 'receiverRole'];
+  for (const field of opt200) {
+    if (body[field] !== undefined && body[field] !== null) {
+      if (typeof body[field] !== 'string') {
+        return { valid: false, message: `${field} must be a string` };
+      }
+      if (body[field].trim().length > 200) {
+        return { valid: false, message: `${field} cannot exceed 200 characters` };
+      }
+    }
+  }
+
+  // handoverNotes: optional, max 1000
+  if (body.handoverNotes !== undefined && body.handoverNotes !== null) {
+    if (typeof body.handoverNotes !== 'string') {
+      return { valid: false, message: 'handoverNotes must be a string' };
+    }
+    if (body.handoverNotes.trim().length > 1000) {
+      return { valid: false, message: 'handoverNotes cannot exceed 1000 characters' };
+    }
+  }
+
+  // date_occurred: format YYYY-MM-DD, a real calendar date, not later than server date + 1 day
+  if (!partial || body.date_occurred !== undefined) {
+    if (typeof body.date_occurred !== 'string') {
+      return { valid: false, message: 'Date occurred must be a string in YYYY-MM-DD format' };
+    }
+    const rawDate = body.date_occurred.trim();
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rawDate);
+    if (!match) {
+      return { valid: false, message: 'Date occurred must be in YYYY-MM-DD format' };
+    }
+    const year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    const day = parseInt(match[3], 10);
+    const d = new Date(year, month - 1, day);
+    if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
+      return { valid: false, message: 'Date occurred must be a real calendar date' };
+    }
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + 1);
+    maxDate.setHours(23, 59, 59, 999);
+    if (d.getTime() > maxDate.getTime()) {
+      return { valid: false, message: 'Date occurred cannot be later than server date + 1 day' };
+    }
+  }
+
+  return { valid: true };
+}
+
 const createItem = async (req, res) => {
   try {
+    const validation = validateItemFields(req.body, { partial: false });
+    if (!validation.valid) {
+      return res.status(400).json({ message: validation.message });
+    }
+
     const {
       title,
       description,
@@ -343,6 +510,11 @@ const updateItem = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to modify this record' });
     }
 
+    const validation = validateItemFields(req.body, { partial: true });
+    if (!validation.valid) {
+      return res.status(400).json({ message: validation.message });
+    }
+
     let isModified = false;
     allowedUpdates.forEach((field) => {
       if (req.body[field] !== undefined) {
@@ -395,7 +567,7 @@ const updateItem = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -433,7 +605,7 @@ const deleteItem = async (req, res) => {
 
     res.status(200).json({ message: 'Item deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -482,7 +654,7 @@ const getSimilarItems = async (req, res) => {
       matches: top,
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -518,7 +690,7 @@ const confirmItemReceipt = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -554,7 +726,7 @@ const denyItemReceipt = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -562,6 +734,10 @@ const disputeItemHandover = async (req, res) => {
   try {
     const { id } = req.params;
     const { reason, proofUrl } = req.body;
+
+    if (reason && (typeof reason !== 'string' || reason.trim().length > 1000)) {
+      return res.status(400).json({ message: 'Dispute reason cannot exceed 1000 characters' });
+    }
 
     const trimmedProofUrl = proofUrl ? String(proofUrl).trim() : '';
     let normalizedProofUrl = null;
@@ -644,7 +820,7 @@ const disputeItemHandover = async (req, res) => {
 
     res.status(200).json(item);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -826,7 +1002,7 @@ const handoverItem = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     console.error('handoverItem error:', error);
-    return res.status(500).json({ message: 'Server error processing handover', error: error.message });
+    return res.status(500).json({ message: 'Server error processing handover' });
   } finally {
     session.endSession();
   }

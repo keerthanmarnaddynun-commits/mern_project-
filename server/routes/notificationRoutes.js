@@ -23,7 +23,6 @@ router.get('/', protect, async (req, res) => {
     console.error('Error fetching user notifications:', error);
     return res.status(500).json({
       message: 'Server error fetching notifications',
-      error: error.message,
     });
   }
 });
@@ -47,7 +46,6 @@ router.patch('/:id/read', protect, validateObjectId, async (req, res) => {
     console.error('Error updating notification:', error);
     return res.status(500).json({
       message: 'Server error updating notification',
-      error: error.message,
     });
   }
 });

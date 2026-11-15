@@ -18,6 +18,10 @@ const submitDispute = async (req, res) => {
     return res.status(400).json({ message: 'Dispute reason is required' });
   }
 
+  if (typeof reason !== 'string' || reason.trim().length > 1000) {
+    return res.status(400).json({ message: 'Dispute reason cannot exceed 1000 characters' });
+  }
+
   const trimmedProofUrl = proofUrl ? String(proofUrl).trim() : '';
   let normalizedProofUrl = null;
   if (trimmedProofUrl) {
@@ -149,7 +153,6 @@ const submitDispute = async (req, res) => {
     console.error('submitDispute error:', error);
     return res.status(500).json({
       message: 'Server error submitting dispute',
-      error: error.message,
     });
   } finally {
     session.endSession();
@@ -170,7 +173,6 @@ const getAllDisputes = async (req, res) => {
     console.error('getAllDisputes error:', error);
     return res.status(500).json({
       message: 'Server error fetching disputes',
-      error: error.message,
     });
   }
 };
@@ -306,7 +308,6 @@ const resolveDispute = async (req, res) => {
     console.error('resolveDispute error:', error);
     return res.status(500).json({
       message: 'Server error resolving dispute',
-      error: error.message,
     });
   }
 };
@@ -402,7 +403,6 @@ const confirmReturn = async (req, res) => {
     console.error('confirmReturn error:', error);
     return res.status(500).json({
       message: 'Server error confirming return',
-      error: error.message,
     });
   } finally {
     session.endSession();

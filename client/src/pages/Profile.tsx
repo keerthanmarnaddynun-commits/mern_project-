@@ -50,7 +50,7 @@ export default function Profile() {
         email,
         ...(emailChanging ? { currentPassword } : {}),
       });
-      updateUser(updatedUser);
+      updateUser(user ? { ...user, ...updatedUser } : updatedUser);
       setSuccess('Profile updated successfully.');
       setIsEditing(false);
       setCurrentPassword('');

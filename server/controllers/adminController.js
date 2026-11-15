@@ -388,7 +388,7 @@ const approveClaim = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     console.error('admin approveClaim error:', error);
-    return res.status(500).json({ message: 'Server error approving claim', error: error.message });
+    return res.status(500).json({ message: 'Server error approving claim' });
   } finally {
     session.endSession();
   }
