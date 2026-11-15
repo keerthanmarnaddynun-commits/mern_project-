@@ -18,6 +18,10 @@ const submitDispute = async (req, res) => {
     return res.status(400).json({ message: 'Dispute reason is required' });
   }
 
+  if (typeof reason !== 'string' || reason.trim().length > 1000) {
+    return res.status(400).json({ message: 'Dispute reason cannot exceed 1000 characters' });
+  }
+
   const trimmedProofUrl = proofUrl ? String(proofUrl).trim() : '';
   let normalizedProofUrl = null;
   if (trimmedProofUrl) {

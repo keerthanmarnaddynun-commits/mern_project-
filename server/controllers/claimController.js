@@ -226,6 +226,9 @@ const createManualClaim = async (req, res) => {
     if (!reasonType) {
       return res.status(400).json({ message: 'Reason type is required' });
     }
+    if (reasonText && (typeof reasonText !== 'string' || reasonText.trim().length > 1000)) {
+      return res.status(400).json({ message: 'Reason text cannot exceed 1000 characters' });
+    }
 
     const item = await Item.findById(itemId);
     if (!item) {
@@ -754,6 +757,13 @@ const resubmitClaim = async (req, res) => {
   try {
     const { id } = req.params;
     const { lostItemId, reasonType, reasonText, manualReasonType, manualReasonText } = req.body || {};
+
+    if (reasonText && (typeof reasonText !== 'string' || reasonText.trim().length > 1000)) {
+      return res.status(400).json({ message: 'Reason text cannot exceed 1000 characters' });
+    }
+    if (manualReasonText && (typeof manualReasonText !== 'string' || manualReasonText.trim().length > 1000)) {
+      return res.status(400).json({ message: 'Reason text cannot exceed 1000 characters' });
+    }
 
     const claim = await Claim.findById(id).populate('itemId', PUBLIC_ITEM_FIELDS);
     if (!claim) {
