@@ -1,8 +1,6 @@
 {
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/"
-    }
+    { "source": "/api/:path*", "destination": "https://lostfound-backend-bbac.onrender.com/api/:path*" },
+    { "source": "/(.*)", "destination": "/" }
   ]
 }
