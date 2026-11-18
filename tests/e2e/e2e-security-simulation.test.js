@@ -677,8 +677,8 @@ describe('End-to-End (E2E) Security Verification Suite', () => {
   describe('PHASE 7: Rate Limiting & Master Audit Log Verification', () => {
     it('7.1 should block excessive requests with 429 Too Many Requests and log LOGIN_RATE_LIMIT_EXCEEDED', async () => {
       let lastRes;
-      // Login rate limiter threshold is 5 requests per 15 minutes
-      for (let i = 0; i < 6; i++) {
+      // Login rate limiter threshold is 10 failed requests per 15 minutes for non-admin email
+      for (let i = 0; i < 11; i++) {
         lastRes = await request(app)
           .post('/api/auth/login')
           .send({
