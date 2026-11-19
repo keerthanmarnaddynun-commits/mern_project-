@@ -11,6 +11,8 @@ const Activity = require('../models/Activity');
 const auditLogger = require('../utils/auditLogger');
 const { clearCsrfCookie } = require('../middleware/csrf');
 const {
+  getAllowedEmailDomain,
+  isAllowedStudentEmail,
   generateVerificationToken,
   sendVerificationEmail,
   sendEmailChangeNotification,
@@ -155,6 +157,12 @@ const updateProfile = async (req, res) => {
 
       let emailPendingTokenRaw = null;
       if (emailChanging) {
+        const userRole = user.role || 'user';
+        if (userRole === 'user' && !isAllowedStudentEmail(nextEmail)) {
+          const domain = getAllowedEmailDomain();
+          return res.status(400).json({ message: `Please register with your college email address (@${domain}).` });
+        }
+
         const emailExists = await User.findOne({
           $or: [{ email: nextEmail }, { pendingEmail: nextEmail }],
           _id: { $ne: user._id },

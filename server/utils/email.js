@@ -2,6 +2,31 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 /**
+ * Resolves the allowed college email domain.
+ * Defaults to 'msrit.edu'.
+ */
+function getAllowedEmailDomain() {
+  const raw = process.env.ALLOWED_EMAIL_DOMAIN || 'msrit.edu';
+  return String(raw).trim().toLowerCase().replace(/^@+/, '');
+}
+
+/**
+ * Checks whether an email is an allowed student email for self-registration.
+ */
+function isAllowedStudentEmail(email) {
+  if (typeof email !== 'string') return false;
+  const cleaned = email.trim().toLowerCase();
+  if (!cleaned) return false;
+  if (/\s/.test(cleaned)) return false;
+  const parts = cleaned.split('@');
+  if (parts.length !== 2) return false;
+  const [localPart, domainPart] = parts;
+  if (!localPart || !domainPart) return false;
+  const domain = getAllowedEmailDomain();
+  return domainPart === domain;
+}
+
+/**
  * Generates a cryptographically secure, single-use random verification token,
  * its SHA-256 hash for database storage, and an expiration timestamp (24 hours).
  */
@@ -149,12 +174,13 @@ If you did not request this, you can safely ignore this email.
       return true;
     }
 
-    // Development / fallback mode: safe simulation
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[email:dev] Verification link for ${to}: ${verificationUrl}`);
-    } else {
-      console.log(`[email] Verification email queued for: ${to}`);
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[email] SMTP not configured; verification email not sent');
+      return false;
     }
+
+    // Development / fallback mode: safe simulation
+    console.log(`[email:dev] Verification link for ${to}: ${verificationUrl}`);
     return true;
   } catch (err) {
     console.error('[email] Failed to send verification email:', err?.message || err);
@@ -202,6 +228,8 @@ If you did NOT request this change, please log in immediately and change your pa
 }
 
 module.exports = {
+  getAllowedEmailDomain,
+  isAllowedStudentEmail,
   generateVerificationToken,
   hashToken,
   sendVerificationEmail,

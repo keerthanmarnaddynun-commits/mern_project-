@@ -162,10 +162,11 @@ export default function Register() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoComplete="email"
-                  placeholder="you@campus.edu"
+                  placeholder="you@msrit.edu"
                   className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 />
               </div>
+              <p className="mt-1 text-xs text-gray-500">Use your college email (@msrit.edu).</p>
             </div>
 
             <div>
