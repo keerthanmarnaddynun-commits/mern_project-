@@ -67,7 +67,7 @@ function escapeRegex(str) {
 
 const getItems = async (req, res) => {
   try {
-    const { status, type, category, search, sortBy, sortOrder, order, page, limit } = req.query || {};
+    const { status, type, category, search, sortBy, sortOrder, order, page, limit, custodyStatus } = req.query || {};
     
     const query = {
       status: { $ne: 'resolved' },
@@ -75,6 +75,14 @@ const getItems = async (req, res) => {
       isHidden: { $ne: true },
       custodyStatus: { $ne: 'rejected' },
     };
+
+    if (custodyStatus !== undefined) {
+      const allowedCustodyStatuses = Item.schema.path('custodyStatus')?.enumValues || [];
+      if (typeof custodyStatus !== 'string' || !allowedCustodyStatuses.includes(custodyStatus)) {
+        return res.status(400).json({ message: 'Invalid custodyStatus parameter' });
+      }
+      query.custodyStatus = custodyStatus;
+    }
 
     const itemType = typeof type === 'string' ? type : typeof status === 'string' ? status : null;
     if (itemType && ['lost', 'found'].includes(itemType.toLowerCase())) {

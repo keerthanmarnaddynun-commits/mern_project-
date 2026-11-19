@@ -151,7 +151,7 @@ export default function FacultyDashboard() {
     setError('');
     try {
       const [itemsData, claimsData] = await Promise.all([
-        fetchItems('found'),
+        fetchItems('found', { custodyStatus: 'awaiting_confirmation' }),
         getDepartmentClaims()
       ]);
       setItems(itemsData);
