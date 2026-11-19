@@ -431,6 +431,10 @@ const createItem = async (req, res) => {
       }
     }
 
+    if (newItem.custodyLocation) {
+      newItem.custodyDepartment = newItem.custodyLocation;
+    }
+
     await newItem.save();
 
     try {
@@ -531,6 +535,10 @@ const updateItem = async (req, res) => {
         }
       }
     });
+
+    if (item.custodyLocation) {
+      item.custodyDepartment = item.custodyLocation;
+    }
 
     if (item.type === 'found') {
       const hasCustodyInfo = !!(item.custodyLocation || item.custodyDepartment);

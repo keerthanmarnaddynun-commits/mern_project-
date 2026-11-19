@@ -64,7 +64,6 @@ export default function ItemDetails() {
     contact_email: '',
     contact_phone: '',
     custodyLocation: '',
-    custodyDepartment: '',
     receiverName: '',
     receiverRole: '',
     handoverNotes: '',
@@ -261,7 +260,6 @@ export default function ItemDetails() {
       contact_email: item.contact_email,
       contact_phone: item.contact_phone || '',
       custodyLocation: item.custodyLocation || '',
-      custodyDepartment: item.custodyDepartment || '',
       receiverName: item.receiverName || '',
       receiverRole: item.receiverRole || '',
       handoverNotes: item.handoverNotes || '',
@@ -287,8 +285,8 @@ export default function ItemDetails() {
         ...editData,
         image_url: editData.image_url || null,
         contact_phone: editData.contact_phone || null,
-        custodyLocation: item.type === 'found' ? editData.custodyLocation || null : null,
-        custodyDepartment: item.type === 'found' ? editData.custodyDepartment || null : null,
+        custodyLocation: item.type === 'found' ? (editData.custodyLocation?.trim() || null) : null,
+        custodyDepartment: item.type === 'found' ? (editData.custodyLocation?.trim() || null) : null,
         receiverName: item.type === 'found' ? editData.receiverName || null : null,
         receiverRole: item.type === 'found' ? editData.receiverRole || null : null,
         handoverNotes: item.type === 'found' ? editData.handoverNotes || null : null,
@@ -1535,15 +1533,6 @@ export default function ItemDetails() {
                           </option>
                         ))}
                       </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
-                      <input
-                        type="text"
-                        value={editData.custodyDepartment}
-                        onChange={(e) => setEditData({ ...editData, custodyDepartment: e.target.value })}
-                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                      />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Receiver Name</label>
