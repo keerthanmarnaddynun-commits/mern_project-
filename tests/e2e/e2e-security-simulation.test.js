@@ -3,6 +3,7 @@ process.env.JWT_SECRET = 'test_jwt_secret_lostfound_super_secure';
 process.env.ADMIN_EMAIL = 'admin@campus.edu';
 process.env.ADMIN_PASSWORD = 'AdminPassword123!';
 process.env.FRONTEND_URL = 'http://localhost:5173';
+process.env.ALLOWED_EMAIL_DOMAIN = 'campus.edu';
 
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');

@@ -34,7 +34,6 @@ export default function PostItem() {
     contact_email: user?.email ?? '',
     contact_phone: '',
     custodyLocation: '',
-    custodyDepartment: '',
     receiverName: '',
     receiverRole: '',
     handoverNotes: '',
@@ -85,8 +84,8 @@ export default function PostItem() {
         image_url: form.image_url || null,
         contact_email: form.contact_email,
         contact_phone: form.contact_phone || null,
-        custodyLocation: form.type === 'found' ? (form.custodyLocation?.trim() || form.custodyDepartment?.trim() || null) : null,
-        custodyDepartment: form.type === 'found' ? (form.custodyDepartment?.trim() || form.custodyLocation?.trim() || null) : null,
+        custodyLocation: form.type === 'found' ? (form.custodyLocation?.trim() || null) : null,
+        custodyDepartment: form.type === 'found' ? (form.custodyLocation?.trim() || null) : null,
         receiverName: form.type === 'found' ? (form.receiverName?.trim() || null) : null,
         receiverRole: form.type === 'found' ? (form.receiverRole?.trim() || null) : null,
         handoverNotes: form.type === 'found' ? (form.handoverNotes?.trim() || null) : null,
@@ -372,12 +371,11 @@ export default function PostItem() {
                       <div className="relative">
                         <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                         <select
-                          name="custodyDepartment"
-                          value={form.custodyDepartment}
+                          name="custodyLocation"
+                          value={form.custodyLocation}
                           onChange={(e) =>
                             setForm({
                               ...form,
-                              custodyDepartment: e.target.value,
                               custodyLocation: e.target.value,
                             })
                           }
@@ -392,22 +390,6 @@ export default function PostItem() {
                         </select>
                         <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                       </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-600 mb-1.5">Department (optional)</label>
-                      <input
-                        type="text"
-                        name="custodyDepartment"
-                        value={form.custodyDepartment}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            custodyDepartment: e.target.value,
-                          })
-                        }
-                        placeholder="e.g. CSE Department Office"
-                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-600 mb-1.5">Receiver Name</label>

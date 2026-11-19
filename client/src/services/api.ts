@@ -38,8 +38,17 @@ API.interceptors.request.use((config) => {
 
 export default API;
 
-export async function fetchItems(type?: 'lost' | 'found'): Promise<Item[]> {
-  const params = type ? { status: type } : {};
+export async function fetchItems(
+  type?: 'lost' | 'found',
+  opts?: { custodyStatus?: string }
+): Promise<Item[]> {
+  const params: Record<string, string> = {};
+  if (type) {
+    params.status = type;
+  }
+  if (opts?.custodyStatus) {
+    params.custodyStatus = opts.custodyStatus;
+  }
   const response = await API.get('/items', { params });
   return Array.isArray(response.data) ? response.data : [];
 }

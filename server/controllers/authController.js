@@ -6,6 +6,8 @@ const auditLogger = require('../utils/auditLogger');
 const { issueCsrfToken, clearCsrfCookie } = require('../middleware/csrf');
 const { getJwtSecret, signToken } = require('../utils/jwt');
 const {
+  getAllowedEmailDomain,
+  isAllowedStudentEmail,
   generateVerificationToken,
   hashToken,
   sendVerificationEmail,
@@ -62,6 +64,11 @@ const registerUser = async (req, res) => {
     }
 
     const emailNorm = String(email).toLowerCase().trim();
+
+    if (!isAllowedStudentEmail(emailNorm)) {
+      const domain = getAllowedEmailDomain();
+      return res.status(400).json({ message: `Please register with your college email address (@${domain}).` });
+    }
 
     const existing = await User.findOne({ email: emailNorm });
     if (existing) {
@@ -420,11 +427,17 @@ const resendVerification = async (req, res) => {
     user.emailVerificationTokenExpires = expires;
     await user.save();
 
-    await sendVerificationEmail({
+    const sent = await sendVerificationEmail({
       to: user.email,
       name: user.name,
       token: rawToken,
     });
+
+    if (!sent) {
+      return res.status(503).json({
+        message: 'We could not send the verification email right now. Please try again later.',
+      });
+    }
 
     return res.status(200).json({
       message: 'Verification email sent. Please check your inbox.',
