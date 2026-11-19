@@ -19,12 +19,12 @@ const connectDB = require('./config/db');
 // Security packages
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const { validateOriginAndCsrf, getAllowedOrigins } = require('./middleware/csrf');
 const errorHandler = require('./middleware/errorHandler');
-const { isWhitelistedIp } = require('./middleware/rateLimiters');
+const { isWhitelistedIp, getRequesterKey } = require('./middleware/rateLimiters');
 
 // Route imports
 const authRoutes = require('./routes/authRoutes');
@@ -186,10 +186,11 @@ const rateLimitHeaders = {
   handler: rateLimitAuditHandler('RATE_LIMIT_EXCEEDED'),
 };
 
-// Rate limiting: 100 req per 15 min globally across /api
+// Rate limiting: 600 req per 15 min per requester globally across /api
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  limit: 600,
+  keyGenerator: getRequesterKey,
   ...rateLimitHeaders,
   skip: isWhitelistedIp,
   message: {
@@ -197,10 +198,40 @@ const globalLimiter = rateLimit({
   },
 });
 
-// Stricter rate limiting for login: 5 req per 15 min
-const loginLimiter = rateLimit({
+const normalizeLoginEmail = (req) => {
+  if (typeof req.body?.email !== 'string') return 'none';
+  const trimmed = req.body.email.trim().toLowerCase().slice(0, 254);
+  return trimmed || 'none';
+};
+
+// Login rate limiting: per-email+IP (5 for ADMIN_EMAIL, 10 otherwise) and per-IP (100) per 15 min
+const loginEmailLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  limit: (req) => {
+    const adminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+    if (adminEmail && normalizeLoginEmail(req) === adminEmail) {
+      return 5;
+    }
+    return 10;
+  },
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const email = normalizeLoginEmail(req);
+    const ipKey = req.ip ? ipKeyGenerator(req.ip) : 'unknown';
+    return `login:${email}:${ipKey}`;
+  },
+  ...rateLimitHeaders,
+  handler: rateLimitAuditHandler('LOGIN_RATE_LIMIT_EXCEEDED'),
+  message: {
+    message: 'Too many login attempts from this IP, please try again after 15 minutes',
+  },
+});
+
+const loginIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => (req.ip ? ipKeyGenerator(req.ip) : 'unknown'),
   ...rateLimitHeaders,
   handler: rateLimitAuditHandler('LOGIN_RATE_LIMIT_EXCEEDED'),
   message: {
@@ -209,9 +240,9 @@ const loginLimiter = rateLimit({
 });
 
 app.use('/api', globalLimiter);
-app.use('/api/users/login', loginLimiter);
-app.use('/api/auth/login', loginLimiter);
-app.use('/api/admin/login', loginLimiter);
+app.use('/api/users/login', loginEmailLimiter, loginIpLimiter);
+app.use('/api/auth/login', loginEmailLimiter, loginIpLimiter);
+app.use('/api/admin/login', loginEmailLimiter, loginIpLimiter);
 
 app.use((req, res, next) => {
   console.log(req.method, req.url);

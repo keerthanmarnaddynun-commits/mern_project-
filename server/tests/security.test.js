@@ -366,10 +366,10 @@ describe('Security & Access Control Integration Tests', () => {
   // Test Suite 3: Rate Limiting
   // =========================================================================
   describe('Test Suite 3: Rate Limiting', () => {
-    it('should allow first 5 login attempts and block the 6th with 429 Too Many Requests from the same IP', async () => {
+    it('should allow first 10 login attempts and block the 11th with 429 Too Many Requests from the same IP', async () => {
       const mockIp = '198.51.100.42'; // Dedicated RFC 5737 TEST-NET-2 IP address for isolation
 
-      for (let attempt = 1; attempt <= 6; attempt++) {
+      for (let attempt = 1; attempt <= 11; attempt++) {
         const response = await request(app)
           .post('/api/users/login')
           .set('X-Forwarded-For', mockIp)
@@ -378,13 +378,13 @@ describe('Security & Access Control Integration Tests', () => {
             password: 'incorrectPassword123',
           });
 
-        if (attempt <= 5) {
+        if (attempt <= 10) {
           // Standard failure response (401 Unauthorized for invalid credentials)
           expect(response.status).not.toBe(429);
           expect(response.status).toBe(401);
           expect(response.body).toHaveProperty('message', 'Invalid email or password');
         } else {
-          // 6th attempt must be rate-limited by loginLimiter (max: 5)
+          // 11th attempt must be rate-limited by loginEmailLimiter (limit: 10)
           expect(response.status).toBe(429);
           expect(response.body).toHaveProperty(
             'message',
